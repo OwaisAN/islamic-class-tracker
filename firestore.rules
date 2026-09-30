@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // v1: no login, so rules must be open to the app. Anyone who has the
+    // Firebase config (it ships in the browser bundle) can read/write.
+    // When adding teacher accounts, replace with:
+    //   allow read, write: if request.auth != null
+    //     && resource.data.teacherId == request.auth.uid;
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
