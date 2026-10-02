@@ -8,19 +8,21 @@ import type { Mode, Student } from "@/lib/types";
 export default function Home() {
   const [students, setStudents] = useState<Student[] | null>(null);
   const [chapter, setChapter] = useState(1);
+  const [nextChapter, setNextChapter] = useState<number | null>(null);
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<Mode>("qaida");
   const [editCh, setEditCh] = useState(false);
-  const [chDraft, setChDraft] = useState("1");
+  const [nextChDraft, setNextChDraft] = useState("");
 
   async function load() {
     try {
       const [s, st] = await Promise.all([getStudents(), getSettings()]);
       setStudents(s);
       setChapter(st.chapter);
+      setNextChapter(st.nextChapter);
     } catch (e) {
       setErr("Couldn't reach the database. Check your Firebase settings and connection.");
       console.error(e);
@@ -43,10 +45,11 @@ export default function Home() {
     load();
   }
 
-  async function submitChapter() {
-    const n = Math.max(1, parseInt(chDraft, 10) || 1);
-    await saveSettings({ chapter: n });
-    setChapter(n); setEditCh(false);
+  async function submitNextChapter() {
+    const trimmed = nextChDraft.trim();
+    const n = trimmed ? Math.max(1, parseInt(trimmed, 10) || chapter + 1) : null;
+    await saveSettings({ nextChapter: n });
+    setNextChapter(n); setEditCh(false);
   }
 
   return (
@@ -57,16 +60,27 @@ export default function Home() {
       </div>
 
       <div className="chapter">
-        <div>Class is currently on<br /><b>Chapter {chapter}</b></div>
-        <button className="small" onClick={() => { setChDraft(String(chapter)); setEditCh(true); }}>Change</button>
+        <div>
+          Class is currently on<br /><b>Chapter {chapter}</b>
+          {nextChapter !== null && <div style={{ fontWeight: 600, fontSize: "0.85rem", opacity: 0.9, marginTop: 2 }}>Up next: Chapter {nextChapter}</div>}
+        </div>
+        <button className="small" onClick={() => { setNextChDraft(nextChapter !== null ? String(nextChapter) : String(chapter + 1)); setEditCh(true); }}>
+          {nextChapter !== null ? "Change" : "Set next"}
+        </button>
       </div>
 
       {editCh && (
         <div className="card stack" style={{ marginBottom: 12 }}>
-          <label className="lbl">Chapter number</label>
-          <input type="number" inputMode="numeric" min={1} value={chDraft} onChange={(e) => setChDraft(e.target.value)} />
+          <label className="lbl">Up next (chapter for next class)</label>
+          <input type="number" inputMode="numeric" min={1} value={nextChDraft} onChange={(e) => setNextChDraft(e.target.value)} />
+          <p className="muted" style={{ margin: 0 }}>
+            Safe to set any time during class — today&apos;s students will still be recorded under Chapter {chapter}. This only takes effect the next time class is logged.
+          </p>
           <div className="row">
-            <button className="grow" onClick={submitChapter}>Save</button>
+            <button className="grow" onClick={submitNextChapter}>Save</button>
+            {nextChapter !== null && (
+              <button className="danger" onClick={async () => { await saveSettings({ nextChapter: null }); setNextChapter(null); setEditCh(false); }}>Clear</button>
+            )}
             <button className="ghost grow" onClick={() => setEditCh(false)}>Cancel</button>
           </div>
         </div>

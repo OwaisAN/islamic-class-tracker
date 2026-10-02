@@ -15,11 +15,12 @@ function detectCapability(file: File | null): ShareCapability {
 }
 
 export default function ParentCard({
-  name, entry, prior, duaList, chapter, onClose,
+  name, entry, prior, duaList, chapter, nextChapter, onClose,
 }: {
-  name: string; entry: Entry; prior: Entry | undefined; duaList: string[]; chapter: number; onClose: () => void;
+  name: string; entry: Entry; prior: Entry | undefined; duaList: string[]; chapter: number;
+  nextChapter: number | null; onClose: () => void;
 }) {
-  const { blocks, plain } = buildParentUpdate(name, entry, prior, duaList, chapter);
+  const { blocks, plain } = buildParentUpdate(name, entry, prior, duaList, chapter, nextChapter);
   const [copiedText, setCopiedText] = useState(false);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [imgFile, setImgFile] = useState<File | null>(null);

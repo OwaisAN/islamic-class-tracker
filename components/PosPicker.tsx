@@ -8,6 +8,7 @@ const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 export default function PosPicker({
   label, pos, onChange,
 }: { label: string; pos: Position; onChange: (p: Position) => void }) {
+  if (!pos) return null; // defensive: a malformed/stale draft shouldn't crash the whole page
   if (pos.mode === "qaida") {
     return (
       <div>
@@ -23,7 +24,7 @@ export default function PosPicker({
       </div>
     );
   }
-  const surah = pos.surah ?? 0;
+  const surah = SURAHS[pos.surah ?? 0] ? pos.surah ?? 0 : 0; // clamp an out-of-range index rather than crash
   const maxAyah = SURAHS[surah].ayahs;
   return (
     <div>

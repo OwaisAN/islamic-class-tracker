@@ -3,6 +3,7 @@ export type HomeworkStatus = "completed" | "almost" | "not_done";
 // A dua/surah picked as homework: `name` is captured at assignment time (like duaNameAtEntry),
 // so editing the list or the fixed track's display later never relabels an already-set homework.
 export interface NamedHomework { name: string; custom: boolean }
+export interface QuranHomework { from: Position; to: Position }
 
 export interface Student {
   id: string;
@@ -32,7 +33,7 @@ export interface Entry {
     issues: string[];
     hesitation: boolean;
     note: string;
-    homework: Position | null; // target set this session, for the student to reach by next class
+    homework: QuranHomework | null; // range set this session, for the student to read by next class
     // How this session's reading compared to the homework set at the PREVIOUS session.
     // null when there was no prior homework to compare against (or the mode changed since).
     homeworkStatus: HomeworkStatus | null;
@@ -61,6 +62,9 @@ export interface Entry {
 }
 
 export interface ClassSettings {
-  chapter: number;
+  chapter: number; // chapter the class is actively on — stamped onto today's entries
+  nextChapter: number | null; // queued chapter for next class; never affects today's entries
+  lastSessionDate: string | null; // YYYY-MM-DD of the most recent day settings were used for;
+  // once a NEW date is seen, nextChapter (if set) is promoted into chapter automatically.
   duaList: string[];
 }

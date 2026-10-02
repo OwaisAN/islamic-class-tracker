@@ -9,7 +9,7 @@ import { getEntries, getSettings, getStudent, saveEntry, updateStudent } from "@
 import { clearLocalDraft, loadLocalDraft, saveLocalDraft } from "@/lib/localDraft";
 import {
   computeDuaIndex, computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex, duaEntryName,
-  duaStuck, fmtPos, homeworkTarget, HOMEWORK_STATUS_LABEL, prettyDate, priorEntries, quranRange, quranStuck,
+  duaStuck, fmtRange, homeworkRange, HOMEWORK_STATUS_LABEL, prettyDate, priorEntries, quranRange, quranStuck,
   sortDesc, surahEntryName, surahStuck, textbookBehind, textbookLabel, todayStr,
 } from "@/lib/logic";
 import { ISSUES, LETTERS, SURAHS, SURAH_TRACK, surahTrackName } from "@/lib/quran";
@@ -173,7 +173,8 @@ export default function StudentPage() {
   const sStuck = surahStuck(d.surah, prior);
   const tBehind = textbookBehind(priors);
   const duaName = (dua: Entry["dua"]) => duaEntryName(dua, settings.duaList);
-  const hwTarget = homeworkTarget(prior, d.quran.start.mode);
+  const hwRange = homeworkRange(prior, d.quran.start.mode);
+  const anyPriorHomework = Boolean(hwRange || prior?.surah.homework || prior?.dua.homework || prior?.textbook.homework);
 
   return (
     <>
@@ -208,13 +209,18 @@ export default function StudentPage() {
         {prior ? (
           <>
             <div>📖 {quranRange(prior)}</div>
-            {hwTarget && <div>🎯 Qur&apos;an homework: {fmtPos(hwTarget)}</div>}
             <div>📗 {surahEntryName(prior.surah)} · {prior.surah.status === "mastered" ? "Mastered" : "Still working"}</div>
-            {prior.surah.homework && <div>🎯 Surah homework: {prior.surah.homework.name}</div>}
             <div>🤲 {duaName(prior.dua)} · {prior.dua.status === "mastered" ? "Mastered" : "Still working"}</div>
-            {prior.dua.homework && <div>🎯 Dua homework: {prior.dua.homework.name}</div>}
             <div>📚 Textbook: {textbookLabel(prior.textbook.status)}</div>
-            {prior.textbook.homework && <div>🎯 Textbook homework: {prior.textbook.homework}</div>}
+            {anyPriorHomework && (
+              <div className="hw" style={{ marginTop: 10 }}>
+                <div className="hw-title">🎯 Homework set</div>
+                {hwRange && <div>Qur&apos;an: {fmtRange(hwRange)}</div>}
+                {prior.surah.homework && <div>Surah: {prior.surah.homework.name}</div>}
+                {prior.dua.homework && <div>Dua: {prior.dua.homework.name}</div>}
+                {prior.textbook.homework && <div>Textbook: {prior.textbook.homework}</div>}
+              </div>
+            )}
           </>
         ) : <div className="muted">No earlier sessions yet.</div>}
       </div>
@@ -224,9 +230,9 @@ export default function StudentPage() {
         <details className="sect" open>
           <summary>Qur&apos;an</summary>
           <div className="body">
-            {hwTarget && (
-              <div className="summary">
-                <b>🎯 Homework was: {fmtPos(hwTarget)}</b>
+            {hwRange && (
+              <div className="hw">
+                <div className="hw-title">🎯 Homework was: {fmtRange(hwRange)}</div>
                 <div className="seg warn" style={{ marginTop: 8 }}>
                   {HOMEWORK_STATUSES.map((s) => (
                     <button
@@ -237,7 +243,7 @@ export default function StudentPage() {
                         if (s === "completed") setEndTouched(true);
                         patch((e) => {
                           e.quran.homeworkStatus = s;
-                          if (s === "completed") { e.quran.end = { ...hwTarget }; }
+                          if (s === "completed") { e.quran.end = { ...hwRange.to }; }
                         });
                       }}
                     >
@@ -285,15 +291,16 @@ export default function StudentPage() {
               <textarea value={d.quran.note} onChange={(ev) => patch((e) => { e.quran.note = ev.target.value; })} />
             </div>
 
-            <div>
-              <label className="lbl">Homework for next class</label>
+            <div className="hw">
+              <div className="hw-title">🎯 Homework for next class</div>
               {d.quran.homework ? (
                 <div className="stack" style={{ gap: 8 }}>
-                  <PosPicker label="Read up to" pos={d.quran.homework} onChange={(p) => patch((e) => { e.quran.homework = p; })} />
+                  <PosPicker label="Read from" pos={d.quran.homework.from} onChange={(p) => patch((e) => { e.quran.homework!.from = p; })} />
+                  <PosPicker label="Read up to" pos={d.quran.homework.to} onChange={(p) => patch((e) => { e.quran.homework!.to = p; })} />
                   <button className="ghost small" onClick={() => patch((e) => { e.quran.homework = null; })}>Remove homework</button>
                 </div>
               ) : (
-                <button className="ghost" onClick={() => patch((e) => { e.quran.homework = { ...e.quran.end }; })}>+ Set homework for next class</button>
+                <button className="ghost" onClick={() => patch((e) => { e.quran.homework = { from: { ...e.quran.end }, to: { ...e.quran.end } }; })}>+ Set homework for next class</button>
               )}
             </div>
           </div>
@@ -334,8 +341,8 @@ export default function StudentPage() {
             </div>
             {sStuck && <div className="warn-box">Same surah as last session and still working.</div>}
 
-            <div>
-              <label className="lbl">Homework for next class (optional)</label>
+            <div className="hw">
+              <div className="hw-title">🎯 Homework for next class</div>
               <select
                 value={!d.surah.homework ? "none" : d.surah.homework.custom ? "custom" : d.surah.homework.name}
                 onChange={(ev) => {
@@ -349,18 +356,18 @@ export default function StudentPage() {
                 {SURAH_TRACK.map((_, i) => <option key={i} value={surahTrackName(i)}>{surahTrackName(i)}</option>)}
                 <option value="custom">Other surah…</option>
               </select>
+              {d.surah.homework?.custom && (
+                <div style={{ marginTop: 8 }}>
+                  <label className="lbl">Which surah</label>
+                  <select
+                    value={SURAHS.findIndex((s) => s.name === d.surah.homework?.name)}
+                    onChange={(ev) => patch((e) => { e.surah.homework = { name: SURAHS[+ev.target.value].name, custom: true }; })}
+                  >
+                    {SURAHS.map((s, i) => <option key={i} value={i}>{i + 1}. {s.name}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
-            {d.surah.homework?.custom && (
-              <div>
-                <label className="lbl">Which surah</label>
-                <select
-                  value={SURAHS.findIndex((s) => s.name === d.surah.homework?.name)}
-                  onChange={(ev) => patch((e) => { e.surah.homework = { name: SURAHS[+ev.target.value].name, custom: true }; })}
-                >
-                  {SURAHS.map((s, i) => <option key={i} value={i}>{i + 1}. {s.name}</option>)}
-                </select>
-              </div>
-            )}
           </div>
         </details>
 
@@ -404,8 +411,8 @@ export default function StudentPage() {
             </div>
             {dStuck && <div className="warn-box">Same dua as last session and still working.</div>}
 
-            <div>
-              <label className="lbl">Homework for next class (optional)</label>
+            <div className="hw">
+              <div className="hw-title">🎯 Homework for next class</div>
               <select
                 value={!d.dua.homework ? "none" : d.dua.homework.custom ? "custom" : d.dua.homework.name}
                 onChange={(ev) => {
@@ -419,19 +426,19 @@ export default function StudentPage() {
                 {settings.duaList.map((n, i) => <option key={i} value={n}>{n}</option>)}
                 <option value="custom">Other…</option>
               </select>
+              {d.dua.homework?.custom && (
+                <div style={{ marginTop: 8 }}>
+                  <label className="lbl">Which dua</label>
+                  <input
+                    type="text"
+                    value={d.dua.homework.name}
+                    autoFocus
+                    placeholder="e.g. Dua for parents"
+                    onChange={(ev) => patch((e) => { e.dua.homework = { name: ev.target.value, custom: true }; })}
+                  />
+                </div>
+              )}
             </div>
-            {d.dua.homework?.custom && (
-              <div>
-                <label className="lbl">Which dua</label>
-                <input
-                  type="text"
-                  value={d.dua.homework.name}
-                  autoFocus
-                  placeholder="e.g. Dua for parents"
-                  onChange={(ev) => patch((e) => { e.dua.homework = { name: ev.target.value, custom: true }; })}
-                />
-              </div>
-            )}
           </div>
         </details>
 
@@ -447,12 +454,19 @@ export default function StudentPage() {
             <textarea placeholder="Note (optional)" value={d.textbook.note} onChange={(ev) => patch((e) => { e.textbook.note = ev.target.value; })} />
             {tBehind && <div className="warn-box">Not done for two sessions running. Falling behind.</div>}
 
-            <div>
-              <label className="lbl">Homework for next class (optional)</label>
+            <div className="hw">
+              <div className="hw-title">
+                🎯 {settings.nextChapter !== null ? `Homework: Move to Chapter ${settings.nextChapter}` : "Homework for next class"}
+              </div>
+              {settings.nextChapter !== null && (
+                <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                  Applies to every student automatically. Add a note below only if this student needs something extra.
+                </p>
+              )}
               <input
                 type="text"
                 value={d.textbook.homework ?? ""}
-                placeholder="e.g. Finish exercise 3, page 14"
+                placeholder={settings.nextChapter !== null ? "Extra note (optional)" : "e.g. Finish exercise 3, page 14"}
                 onChange={(ev) => patch((e) => { e.textbook.homework = ev.target.value || null; })}
               />
             </div>
@@ -464,16 +478,27 @@ export default function StudentPage() {
           <summary>Past sessions ({entries.length})</summary>
           <div className="body">
             {!entries.length && <p className="muted" style={{ margin: 0 }}>Nothing saved yet.</p>}
-            {sortDesc(entries).map((e) => (
-              <button key={e.date} className={`hist ${e.date === date ? "cur" : ""}`} onClick={() => goDate(e.date)}>
-                <b>{prettyDate(e.date)}</b>
-                <span>📖 {quranRange(e)}{e.quran.homeworkStatus ? ` · Homework: ${HOMEWORK_STATUS_LABEL[e.quran.homeworkStatus]}` : ""}</span>
-                {e.quran.homework && <span>🎯 Set homework: {fmtPos(e.quran.homework)}</span>}
-                <span>📗 {surahEntryName(e.surah)} · {e.surah.status === "mastered" ? "Mastered" : "Working"}{e.surah.homework ? ` · Homework: ${e.surah.homework.name}` : ""}</span>
-                <span>🤲 {duaName(e.dua)} · {e.dua.status === "mastered" ? "Mastered" : "Working"}{e.dua.homework ? ` · Homework: ${e.dua.homework.name}` : ""}</span>
-                <span>📚 {textbookLabel(e.textbook.status)}{e.textbook.homework ? ` · Homework: ${e.textbook.homework}` : ""}</span>
-              </button>
-            ))}
+            {sortDesc(entries).map((e) => {
+              const anyHomework = Boolean(e.quran.homework || e.surah.homework || e.dua.homework || e.textbook.homework);
+              return (
+                <button key={e.date} className={`hist ${e.date === date ? "cur" : ""}`} onClick={() => goDate(e.date)}>
+                  <b>{prettyDate(e.date)}</b>
+                  <span>📖 {quranRange(e)}{e.quran.homeworkStatus ? ` · Homework: ${HOMEWORK_STATUS_LABEL[e.quran.homeworkStatus]}` : ""}</span>
+                  <span>📗 {surahEntryName(e.surah)} · {e.surah.status === "mastered" ? "Mastered" : "Working"}</span>
+                  <span>🤲 {duaName(e.dua)} · {e.dua.status === "mastered" ? "Mastered" : "Working"}</span>
+                  <span>📚 {textbookLabel(e.textbook.status)}</span>
+                  {anyHomework && (
+                    <div className="hw" style={{ marginTop: 6, padding: "8px 10px" }}>
+                      <div className="hw-title" style={{ fontSize: "0.8rem" }}>🎯 Homework set</div>
+                      {e.quran.homework && <span>Qur&apos;an: {fmtRange(e.quran.homework)}</span>}
+                      {e.surah.homework && <span>Surah: {e.surah.homework.name}</span>}
+                      {e.dua.homework && <span>Dua: {e.dua.homework.name}</span>}
+                      {e.textbook.homework && <span>Textbook: {e.textbook.homework}</span>}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </details>
       </div>
@@ -486,7 +511,10 @@ export default function StudentPage() {
       {toast && <div className="toast">{toast}</div>}
 
       {showCard && latest && (
-        <ParentCard name={student.name} entry={latest} prior={latestPrior} duaList={settings.duaList} chapter={settings.chapter} onClose={() => setShowCard(false)} />
+        <ParentCard
+          name={student.name} entry={latest} prior={latestPrior} duaList={settings.duaList}
+          chapter={settings.chapter} nextChapter={settings.nextChapter} onClose={() => setShowCard(false)}
+        />
       )}
     </>
   );

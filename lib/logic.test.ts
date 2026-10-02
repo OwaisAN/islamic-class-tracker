@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   comparePos, quranStuck, duaStuck, duaEntryName, surahStuck, textbookBehind, computeDuaIndex, computeSurahTrackIndex,
-  defaultDuaIndex, defaultStart, defaultSurahTrackIndex, homeworkTarget, buildParentUpdate,
+  defaultDuaIndex, defaultStart, defaultSurahTrackIndex, homeworkRange, fmtRange, rollChapterForDate, buildParentUpdate,
+  normalizeEntry,
 } from "./logic.ts";
 import { SURAHS, SURAH_TRACK } from "./quran.ts";
 import type { Entry, Position } from "./types.ts";
@@ -54,11 +55,13 @@ test("dua name snapshot survives the list changing later; custom dua uses its ow
   const custom = mk("2026-01-01", q(0, 1), { dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: true, customDua: "Dua for parents", status: "working", homework: null } });
   assert.equal(duaEntryName(custom.dua, ["Before eating"]), "Dua for parents");
 });
-test("homework target only applies when the mode still matches", () => {
-  const prior = mk("2026-01-01", q(0, 1), { quran: { start: q(0, 1), end: q(0, 1), letters: [], issues: [], hesitation: false, note: "", homework: q(1, 5), homeworkStatus: null } });
-  assert.deepEqual(homeworkTarget(prior, "quran"), q(1, 5));
-  assert.equal(homeworkTarget(prior, "qaida"), null);
-  assert.equal(homeworkTarget(undefined, "quran"), null);
+test("homework range only applies when the mode still matches", () => {
+  const range = { from: q(0, 1), to: q(1, 5) };
+  const prior = mk("2026-01-01", q(0, 1), { quran: { start: q(0, 1), end: q(0, 1), letters: [], issues: [], hesitation: false, note: "", homework: range, homeworkStatus: null } });
+  assert.deepEqual(homeworkRange(prior, "quran"), range);
+  assert.equal(homeworkRange(prior, "qaida"), null);
+  assert.equal(homeworkRange(undefined, "quran"), null);
+  assert.equal(fmtRange(range), "Al-Fatihah 1 → Al-Baqarah 5");
 });
 test("textbook behind needs two prior not_done", () => {
   const nd = (d: string) => mk(d, q(0, 1), { textbook: { status: "not_done", note: "", homework: null } });
@@ -100,7 +103,7 @@ test("default start", () => {
 });
 test("parent update: terse per-track lines, all homework merged into one bubble", () => {
   const e = mk("2026-01-10", q(1, 20), {
-    quran: { start: q(1, 10), end: q(1, 20), letters: ["saad"], issues: ["over"], hesitation: true, note: "", homework: q(2, 1), homeworkStatus: null },
+    quran: { start: q(1, 10), end: q(1, 20), letters: ["saad"], issues: ["over"], hesitation: true, note: "", homework: { from: q(1, 20), to: q(2, 1) }, homeworkStatus: null },
     surah: { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "working", homework: { name: "An-Nas", custom: false } },
     dua: { duaIndexAtEntry: 0, duaNameAtEntry: "Before eating", custom: false, customDua: null, status: "working", homework: { name: "Before sleeping", custom: false } },
     textbook: { status: "done", note: "", homework: "Finish exercise 3" },
@@ -111,7 +114,7 @@ test("parent update: terse per-track lines, all homework merged into one bubble"
   assert.match(blocks[0].text, /Saad/);
   const hw = blocks[blocks.length - 1];
   assert.equal(hw.title, "🎯 Homework for next class");
-  assert.match(hw.text, /Qur'an: read to Aal-E-Imran 1/);
+  assert.match(hw.text, /Qur'an: read from Al-Baqarah 20 to Aal-E-Imran 1/);
   assert.match(hw.text, /Surah: An-Nas/);
   assert.match(hw.text, /Dua: Before sleeping/);
   assert.match(hw.text, /Textbook: Finish exercise 3/);
@@ -122,4 +125,53 @@ test("parent update omits the homework bubble when nothing was assigned", () => 
   const { blocks } = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3);
   assert.equal(blocks.length, 4);
   assert.ok(!blocks.some((b) => b.title.includes("Homework")));
+});
+test("chapter move is always included regardless of this student's completion status", () => {
+  const incomplete = mk("2026-01-10", q(1, 20), { textbook: { status: "not_done", note: "", homework: null } });
+  const { blocks: a } = buildParentUpdate("Ali", incomplete, undefined, ["Before eating"], 3, 4);
+  const hwA = a[a.length - 1];
+  assert.equal(hwA.title, "🎯 Homework for next class");
+  assert.match(hwA.text, /Textbook: Move to Chapter 4/);
+
+  const complete = mk("2026-01-10", q(1, 20), { textbook: { status: "done", note: "", homework: null } });
+  const { blocks: b } = buildParentUpdate("Ali", complete, undefined, ["Before eating"], 3, 4);
+  assert.match(b[b.length - 1].text, /Textbook: Move to Chapter 4/);
+
+  // A per-student extra note rides alongside the automatic chapter move.
+  const withNote = mk("2026-01-10", q(1, 20), { textbook: { status: "partial", note: "", homework: "Also finish page 12" } });
+  const { blocks: c } = buildParentUpdate("Ali", withNote, undefined, ["Before eating"], 3, 4);
+  assert.match(c[c.length - 1].text, /Textbook: Move to Chapter 4 · Also finish page 12/);
+
+  // With no "Up next" set, nothing is assumed.
+  const noNext = mk("2026-01-10", q(1, 20));
+  const { blocks: d } = buildParentUpdate("Ali", noNext, undefined, ["Before eating"], 3, null);
+  assert.ok(!d.some((bl) => bl.title.includes("Homework")));
+});
+test("rollChapterForDate: Up next only takes effect on a genuinely new date", () => {
+  const fresh = { chapter: 3, nextChapter: null, lastSessionDate: null };
+  assert.deepEqual(rollChapterForDate(fresh, "2026-01-10"), { chapter: 3, nextChapter: null, lastSessionDate: "2026-01-10" });
+
+  const queued = { chapter: 3, nextChapter: 4, lastSessionDate: "2026-01-10" };
+  // Same day: never promotes, no matter how many times it's set/checked mid-session.
+  assert.deepEqual(rollChapterForDate(queued, "2026-01-10"), queued);
+  // A later date: promotes and clears the queue.
+  assert.deepEqual(rollChapterForDate(queued, "2026-01-17"), { chapter: 4, nextChapter: null, lastSessionDate: "2026-01-17" });
+
+  const noQueue = { chapter: 3, nextChapter: null, lastSessionDate: "2026-01-10" };
+  assert.deepEqual(rollChapterForDate(noQueue, "2026-01-17"), { chapter: 3, nextChapter: null, lastSessionDate: "2026-01-17" });
+});
+test("normalizeEntry repairs a stale draft's pre-range Qur'an homework so pickers never see undefined", () => {
+  // Shape a draft would have had before homework became { from, to } — just a flat Position.
+  const stale = mk("2026-01-10", q(0, 1), { quran: { ...mk("x", q(0, 1)).quran, homework: qa(3, 5) as unknown as Entry["quran"]["homework"] } });
+  const fixed = normalizeEntry(stale);
+  assert.ok(fixed.quran.homework);
+  assert.deepEqual(fixed.quran.homework!.from, qa(3, 5));
+  assert.deepEqual(fixed.quran.homework!.to, qa(3, 5));
+
+  // A partially-repaired draft (has "to" but lost "from" mid-edit) is also recovered, not crashed on.
+  const partial = mk("2026-01-10", q(0, 1), {
+    quran: { ...mk("x", q(0, 1)).quran, homework: { to: qa(3, 5) } as unknown as Entry["quran"]["homework"] },
+  });
+  const fixedPartial = normalizeEntry(partial);
+  assert.deepEqual(fixedPartial.quran.homework, { from: qa(3, 5), to: qa(3, 5) });
 });

@@ -1,4 +1,4 @@
-import type { Entry, HomeworkStatus, Mode, Position } from "./types.ts";
+import type { Entry, HomeworkStatus, Mode, NamedHomework, Position, QuranHomework } from "./types.ts";
 import { SURAHS, SURAH_TRACK, emptyPosition, issueLabel, letterName, surahTrackName } from "./quran.ts";
 
 // ---------- dates ----------
@@ -16,6 +16,44 @@ export function prettyDate(date: string): string {
 }
 
 export const entryId = (studentId: string, date: string) => `${studentId}_${date}`;
+
+// ---------- entry shape normalization ----------
+// Applied to every Entry read from ANYWHERE (Firestore, localStorage drafts) so that an older
+// shape lingering in one place (e.g. a draft cached before a field's shape changed) never slips
+// past the others and reaches a component expecting the current shape.
+function normalizeNamedHomework(h: unknown): NamedHomework | null {
+  if (!h) return null;
+  if (typeof h === "string") return { name: h, custom: true }; // pre-dropdown shape (plain string)
+  return h as NamedHomework;
+}
+
+function normalizeQuranHomework(h: unknown): QuranHomework | null {
+  if (!h) return null;
+  if (typeof h === "object" && h !== null && "from" in h && "to" in h && h.from && h.to) return h as QuranHomework;
+  // Pre-range shape (a single target Position) — treat that single point as both ends.
+  // Also recovers a partially-formed { from, to } (e.g. a stale draft missing one side).
+  const anyH = h as Partial<QuranHomework> & Position;
+  const point = (anyH.from ?? anyH.to ?? anyH) as Position;
+  return { from: anyH.from ?? point, to: anyH.to ?? point };
+}
+
+export function normalizeEntry(e: Entry): Entry {
+  return {
+    ...e,
+    quran: { ...e.quran, homework: normalizeQuranHomework(e.quran.homework), homeworkStatus: e.quran.homeworkStatus ?? null },
+    dua: {
+      ...e.dua,
+      custom: e.dua.custom ?? false,
+      customDua: e.dua.customDua ?? null,
+      duaNameAtEntry: e.dua.duaNameAtEntry ?? null,
+      homework: normalizeNamedHomework(e.dua.homework),
+    },
+    surah: e.surah
+      ? { ...e.surah, homework: normalizeNamedHomework(e.surah.homework) }
+      : { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "working", homework: null },
+    textbook: { ...e.textbook, homework: e.textbook.homework ?? null },
+  };
+}
 
 // ---------- entry ordering ----------
 /** Entries sorted newest first. */
@@ -57,11 +95,14 @@ export function quranStuck(end: Position, prior: Entry | undefined): boolean {
 }
 
 // ---------- homework ----------
-/** The homework target set at the prior session, if any and still comparable (same mode). */
-export function homeworkTarget(prior: Entry | undefined, mode: Mode): Position | null {
-  if (!prior || !prior.quran.homework || prior.quran.homework.mode !== mode) return null;
-  return prior.quran.homework;
+/** The homework range set at the prior session, if any and still comparable (same mode). */
+export function homeworkRange(prior: Entry | undefined, mode: Mode): QuranHomework | null {
+  const hw = prior?.quran.homework;
+  if (!hw || hw.to.mode !== mode) return null;
+  return hw;
 }
+
+export const fmtRange = (r: QuranHomework) => `${fmtPos(r.from)} → ${fmtPos(r.to)}`;
 
 export const HOMEWORK_STATUS_LABEL: Record<HomeworkStatus, string> = {
   completed: "Completed",
@@ -84,6 +125,21 @@ export function duaStuck(
 /** priors = prior entries, newest first. Falling behind if the two most recent priors were not_done. */
 export function textbookBehind(priors: Entry[]): boolean {
   return priors.length >= 2 && priors[0].textbook.status === "not_done" && priors[1].textbook.status === "not_done";
+}
+
+// ---------- chapter rollover ----------
+export interface ChapterState { chapter: number; nextChapter: number | null; lastSessionDate: string | null }
+
+/**
+ * Decides whether "Up next" should become "current" for `date`. It only promotes once a
+ * genuinely NEW date is seen (never retroactively mid-session), so changing "Up next" at any
+ * point during today's class can never relabel today's own entries.
+ */
+export function rollChapterForDate(settings: ChapterState, date: string): ChapterState {
+  if (!settings.lastSessionDate || date > settings.lastSessionDate) {
+    return { chapter: settings.nextChapter ?? settings.chapter, nextChapter: null, lastSessionDate: date };
+  }
+  return settings;
 }
 
 // ---------- dua default & auto-advance ----------
@@ -173,6 +229,7 @@ export function buildParentUpdate(
   prior: Entry | undefined,
   duaList: string[],
   chapter: number,
+  nextChapter: number | null = null,
 ): { blocks: ParentBlock[]; plain: string } {
   const q = entry.quran;
   const moved = q.end.mode === q.start.mode ? comparePos(q.end, q.start) > 0 : true;
@@ -212,10 +269,16 @@ export function buildParentUpdate(
 
   // All three tracks' homework in one bubble, so parents see the full to-do list at a glance.
   const hwLines: string[] = [];
-  if (q.homework) hwLines.push(`Qur'an: read to ${fmtPos(q.homework)}`);
+  if (q.homework) hwLines.push(`Qur'an: read from ${fmtPos(q.homework.from)} to ${fmtPos(q.homework.to)}`);
   if (entry.surah.homework) hwLines.push(`Surah: ${entry.surah.homework.name}`);
   if (entry.dua.homework) hwLines.push(`Dua: ${entry.dua.homework.name}`);
-  if (tb.homework) hwLines.push(`Textbook: ${tb.homework}`);
+  // The chapter move is classwide and applies no matter whether this student finished today's
+  // chapter — it's about what's next, not a reward for completion. A per-student note (if any)
+  // rides alongside it.
+  const tbHwParts: string[] = [];
+  if (nextChapter !== null) tbHwParts.push(`Move to Chapter ${nextChapter}`);
+  if (tb.homework) tbHwParts.push(tb.homework);
+  if (tbHwParts.length) hwLines.push(`Textbook: ${tbHwParts.join(" · ")}`);
   if (hwLines.length) blocks.push({ title: "🎯 Homework for next class", tone: "attention", text: hwLines.join("\n") });
 
   const plain = [

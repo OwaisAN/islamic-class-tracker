@@ -104,6 +104,12 @@ label.lbl { display: block; font-size: 0.8rem; font-weight: 700; color: var(--mu
 .summary { background: var(--teal-soft); border-radius: var(--radius); padding: 12px 14px; font-size: 0.92rem; }
 .summary div + div { margin-top: 4px; }
 
+/* Homework: deliberately louder than the surrounding fields — gold border + tint, bold title —
+   so "what to do before next class" never blends into the rest of a section. */
+.hw { background: var(--gold-soft); border: 2px solid var(--gold); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.hw-title { font-weight: 800; color: #6b4f0f; font-size: 0.95rem; }
+.hw select, .hw input[type="text"] { border-color: var(--gold); }
+
 .hist { width: 100%; text-align: left; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-height: 56px; display: block; font-weight: 500; }
 .hist.cur { border-color: var(--gold); background: var(--gold-soft); }
 .hist b { display: block; margin-bottom: 2px; }

@@ -2,39 +2,12 @@ import { getApp, getApps, initializeApp } from "firebase/app";
 import {
   collection, doc, getDoc, getDocs, getFirestore, query, setDoc, updateDoc, where,
 } from "firebase/firestore";
-import type { ClassSettings, Entry, Mode, NamedHomework, Student } from "./types";
+import type { ClassSettings, Entry, Mode, Student } from "./types";
 import { DEFAULT_DUAS } from "./quran";
-import { computeDuaIndex, computeSurahTrackIndex, entryId } from "./logic";
+import { computeDuaIndex, computeSurahTrackIndex, entryId, normalizeEntry, rollChapterForDate, todayStr } from "./logic";
 
 // Existing student docs predate the surahTrackIndex field.
 const withDefaults = (s: Omit<Student, "id">): Omit<Student, "id"> => ({ ...s, surahTrackIndex: s.surahTrackIndex ?? 0 });
-
-// A brief earlier version stored dua/surah homework as a plain string; normalize that
-// into the current { name, custom } shape (treated as a custom entry, since we can no
-// longer tell whether it came from the list).
-function normalizeNamedHomework(h: unknown): NamedHomework | null {
-  if (!h) return null;
-  if (typeof h === "string") return { name: h, custom: true };
-  return h as NamedHomework;
-}
-
-// Existing entry docs predate the surah field, the dua custom/customDua/duaNameAtEntry/homework
-// fields, and the quran/textbook homework fields.
-const withEntryDefaults = (e: Entry): Entry => ({
-  ...e,
-  quran: { ...e.quran, homework: e.quran.homework ?? null, homeworkStatus: e.quran.homeworkStatus ?? null },
-  dua: {
-    ...e.dua,
-    custom: e.dua.custom ?? false,
-    customDua: e.dua.customDua ?? null,
-    duaNameAtEntry: e.dua.duaNameAtEntry ?? null,
-    homework: normalizeNamedHomework(e.dua.homework),
-  },
-  surah: e.surah
-    ? { ...e.surah, homework: normalizeNamedHomework(e.surah.homework) }
-    : { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "working", homework: null },
-  textbook: { ...e.textbook, homework: e.textbook.homework ?? null },
-});
 
 const app = getApps().length
   ? getApp()
@@ -53,15 +26,27 @@ const db = getFirestore(app);
 // ----- settings -----
 const settingsRef = () => doc(db, "settings", "class");
 
+/**
+ * Reads settings, then rolls "Up next" into "current" if a new day has started since the last
+ * time this was called (see rollChapterForDate) — so just opening the app for the day is enough
+ * to start the new chapter, with no risk of a mid-class edit relabeling today's own entries.
+ */
 export async function getSettings(): Promise<ClassSettings> {
   const snap = await getDoc(settingsRef());
-  if (snap.exists()) {
-    const d = snap.data() as Partial<ClassSettings>;
-    return { chapter: d.chapter ?? 1, duaList: d.duaList ?? DEFAULT_DUAS };
+  const base: ClassSettings = snap.exists()
+    ? {
+        chapter: 1, nextChapter: null, lastSessionDate: null, duaList: DEFAULT_DUAS,
+        ...(snap.data() as Partial<ClassSettings>),
+      }
+    : { chapter: 1, nextChapter: null, lastSessionDate: null, duaList: DEFAULT_DUAS };
+  if (!snap.exists()) await setDoc(settingsRef(), base);
+
+  const rolled = rollChapterForDate(base, todayStr());
+  if (rolled !== base) {
+    await saveSettings(rolled);
+    return { ...base, ...rolled };
   }
-  const fresh: ClassSettings = { chapter: 1, duaList: DEFAULT_DUAS };
-  await setDoc(settingsRef(), fresh);
-  return fresh;
+  return base;
 }
 
 export async function saveSettings(patch: Partial<ClassSettings>) {
@@ -92,17 +77,19 @@ export async function updateStudent(id: string, patch: Partial<Omit<Student, "id
 // ----- entries -----
 export async function getEntries(studentId: string): Promise<Entry[]> {
   const snap = await getDocs(query(collection(db, "entries"), where("studentId", "==", studentId)));
-  return snap.docs.map((d) => withEntryDefaults(d.data() as Entry));
+  return snap.docs.map((d) => normalizeEntry(d.data() as Entry));
 }
 
 /**
  * Overwrites the entry for (student, date), then re-syncs the student's duaIndex/surahTrackIndex.
  * `otherEntries` is the student's already-loaded entries (any entry for this same date is replaced,
  * not duplicated) — this avoids re-fetching everything from Firestore just to recompute the two indexes.
+ * The entry is normalized before writing, too, so a stale draft never persists a broken shape.
  */
 export async function saveEntry(entry: Entry, otherEntries: Entry[], duaCount: number): Promise<Entry[]> {
-  await setDoc(doc(db, "entries", entryId(entry.studentId, entry.date)), entry);
-  const all = [...otherEntries.filter((e) => e.date !== entry.date), entry];
+  const normalized = normalizeEntry(entry);
+  await setDoc(doc(db, "entries", entryId(normalized.studentId, normalized.date)), normalized);
+  const all = [...otherEntries.filter((e) => e.date !== normalized.date), normalized];
   const duaIdx = computeDuaIndex(all, duaCount);
   const surahIdx = computeSurahTrackIndex(all);
   const patch: Partial<Student> = {};
