@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  comparePos, quranStuck, duaStuck, duaEntryName, effectiveDuaHomework, surahStuck, textbookBehind, computeDuaIndex,
-  computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex, homeworkRange, fmtRange,
-  rollChapterForDate, buildParentUpdate, normalizeEntry,
+  comparePos, quranStuck, duaStuck, duaEntryName, effectiveDuaHomework, effectiveSurahHomework, surahStuck,
+  textbookBehind, computeDuaIndex, computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex,
+  homeworkRange, fmtRange, rollChapterForDate, buildParentUpdate, normalizeEntry, statusLabel, trackLabel,
 } from "./logic.ts";
 import { SURAHS, SURAH_TRACK } from "./quran.ts";
 import type { Entry, Position } from "./types.ts";
@@ -113,7 +113,7 @@ test("parent update: terse per-track lines, all homework merged into one bubble"
   assert.equal(blocks[0].tone, "attention");
   assert.match(blocks[0].text, /Saad/);
   const hw = blocks[blocks.length - 1];
-  assert.equal(hw.title, "🎯 Homework for next class");
+  assert.equal(hw.title, "🌟 Homework for next class");
   assert.match(hw.text, /Qur'an: read from Al-Baqarah 20 to Aal-E-Imran 1/);
   assert.match(hw.text, /Surah: An-Nas/);
   assert.match(hw.text, /Dua: Before sleeping/);
@@ -135,14 +135,14 @@ test("parent update: a still-working dua with no explicit homework shows itself 
   const e = mk("2026-01-10", q(1, 20)); // default dua: duaIndexAtEntry 0, status "working", no homework set
   const { blocks } = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3);
   const hw = blocks[blocks.length - 1];
-  assert.equal(hw.title, "🎯 Homework for next class");
+  assert.equal(hw.title, "🌟 Homework for next class");
   assert.match(hw.text, /Dua: Before eating/);
 });
 test("chapter move is always included regardless of this student's completion status", () => {
   const incomplete = mk("2026-01-10", q(1, 20), { textbook: { status: "not_done", note: "", homework: null } });
   const { blocks: a } = buildParentUpdate("Ali", incomplete, undefined, ["Before eating"], 3, 4);
   const hwA = a[a.length - 1];
-  assert.equal(hwA.title, "🎯 Homework for next class");
+  assert.equal(hwA.title, "🌟 Homework for next class");
   assert.match(hwA.text, /Textbook: Move to Chapter 4/);
 
   const complete = mk("2026-01-10", q(1, 20), { textbook: { status: "done", note: "", homework: null } });
@@ -202,4 +202,30 @@ test("effectiveDuaHomework: still-working defaults to the current dua; an explic
 
   const customDua = { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: true, customDua: "Dua for parents", status: "working" as const, homework: null };
   assert.deepEqual(effectiveDuaHomework(customDua, []), { name: "Dua for parents", custom: true });
+});
+test("effectiveSurahHomework: still-working defaults to the current surah; mastery or an explicit choice override that", () => {
+  const working = { trackIndexAtEntry: 1, custom: false, customSurah: null, status: "working" as const, homework: null };
+  assert.deepEqual(effectiveSurahHomework(working), { name: "An-Nas", custom: false });
+
+  const complete = { ...working, status: "mastered" as const };
+  assert.equal(effectiveSurahHomework(complete), null);
+
+  const explicit = { ...working, homework: { name: "Al-Falaq", custom: false } };
+  assert.deepEqual(effectiveSurahHomework(explicit), { name: "Al-Falaq", custom: false });
+});
+test("trackLabel and statusLabel read naturally for both tracks and the renamed status", () => {
+  assert.equal(trackLabel("qaida"), "Qaida");
+  assert.equal(trackLabel("quran"), "Qur'an");
+  assert.equal(statusLabel("mastered"), "Complete");
+  assert.equal(statusLabel("working"), "Working");
+});
+test("parent update block kinds match their section, for per-section image/card coloring", () => {
+  const e = mk("2026-01-10", qa(1, 1), {
+    dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: false, customDua: null, status: "mastered", homework: null },
+    surah: { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "mastered", homework: null },
+  });
+  const { blocks } = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3);
+  assert.deepEqual(blocks.map((b) => b.kind), ["quran", "surah", "dua", "textbook"]);
+  // On Qaida, the Qur'an block is labeled "Qaida", not "Qur'an".
+  assert.match(blocks[0].title, /Qaida/);
 });

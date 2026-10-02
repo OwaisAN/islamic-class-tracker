@@ -1,4 +1,4 @@
-import type { ParentBlock } from "./logic";
+import type { BlockKind, ParentBlock } from "./logic";
 
 // Mirrors the color tokens in app/globals.css. Canvas can't read CSS variables,
 // so these are kept in sync by hand — update both places together.
@@ -7,17 +7,23 @@ const COLORS = {
   ink: "#1f2a2b",
   muted: "#6b7778",
   tealDark: "#0a3b3f",
-  green: "#2f7d4f",
-  greenSoft: "#dfeee4",
-  gold: "#b8923a",
-  goldSoft: "#f4ead2",
+};
+
+// Each track gets its own color, rather than everything being green-or-gold — the tone
+// (good/attention) is instead shown as a small badge in the corner, so the card reads as
+// lively and varied while still being clear about what needs attention.
+const KIND_STYLE: Record<BlockKind, { accent: string; soft: string }> = {
+  quran: { accent: "#0f5257", soft: "#dcebe9" }, // teal
+  surah: { accent: "#6a4c93", soft: "#ece3f5" }, // purple
+  dua: { accent: "#c2447a", soft: "#fbe3ee" }, // rose
+  textbook: { accent: "#b8611a", soft: "#f7e6d2" }, // amber
+  homework: { accent: "#e2572b", soft: "#ffe4d2" }, // vivid orange — the one that should pop most
 };
 
 const WIDTH = 640;
 const PAD = 22;
 const BLOCK_PAD = 16;
-const ACCENT_W = 6;
-const GAP = 12;
+const GAP = 14;
 const FONT = "Manrope, system-ui, sans-serif";
 
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
@@ -60,14 +66,17 @@ export async function renderParentCardImage(name: string, dateLabel: string, blo
 
   const measure = document.createElement("canvas").getContext("2d")!;
   const innerW = WIDTH - PAD * 2;
-  const textW = innerW - BLOCK_PAD * 2 - ACCENT_W;
 
   const layout = blocks.map((b) => {
+    const isHw = b.kind === "homework";
+    const accentW = isHw ? 10 : 6;
+    const titleSize = isHw ? 19 : 16;
+    const textW = innerW - BLOCK_PAD * 2 - accentW;
     measure.font = `500 15px ${FONT}`;
     const lines = wrapMultiline(measure, b.text, textW);
-    const titleH = 22;
+    const titleH = isHw ? 25 : 22;
     const lineH = 21;
-    return { ...b, lines, height: BLOCK_PAD * 2 + titleH + 4 + lines.length * lineH };
+    return { ...b, lines, accentW, titleSize, height: BLOCK_PAD * 2 + titleH + 4 + lines.length * lineH };
   });
 
   const headerH = 30 + 22 + 16;
@@ -97,24 +106,48 @@ export async function renderParentCardImage(name: string, dateLabel: string, blo
   y += 22 + 16;
 
   for (const b of layout) {
-    const accent = b.tone === "good" ? COLORS.green : COLORS.gold;
-    const soft = b.tone === "good" ? COLORS.greenSoft : COLORS.goldSoft;
+    const { accent, soft } = KIND_STYLE[b.kind];
+    const isHw = b.kind === "homework";
 
-    roundRect(ctx, PAD, y, innerW, b.height, 10);
-    ctx.fillStyle = soft;
-    ctx.fill();
+    if (isHw) {
+      // A soft drop shadow lifts the homework card off the page — it's the one thing that
+      // should visually jump out ahead of everything else.
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.18)";
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 4;
+      roundRect(ctx, PAD, y, innerW, b.height, 14);
+      ctx.fillStyle = soft;
+      ctx.fill();
+      ctx.restore();
+      // A full outline (not just a left bar) so it reads as a distinct, bordered card.
+      roundRect(ctx, PAD + 1, y + 1, innerW - 2, b.height - 2, 14);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    } else {
+      roundRect(ctx, PAD, y, innerW, b.height, 10);
+      ctx.fillStyle = soft;
+      ctx.fill();
+    }
     ctx.fillStyle = accent;
-    ctx.fillRect(PAD, y, ACCENT_W, b.height);
+    ctx.fillRect(PAD, y, b.accentW, b.height);
+
+    // Tone badge in the corner carries good/attention now that block color is per-section.
+    const badge = b.tone === "good" ? "✅" : "🟠";
+    ctx.font = "16px sans-serif";
+    const badgeW = ctx.measureText(badge).width;
+    ctx.fillText(badge, PAD + innerW - BLOCK_PAD - badgeW, y + BLOCK_PAD - 2);
 
     let by = y + BLOCK_PAD;
     ctx.fillStyle = COLORS.ink;
-    ctx.font = `700 16px ${FONT}`;
-    ctx.fillText(b.title, PAD + BLOCK_PAD + ACCENT_W, by);
-    by += 22 + 4;
+    ctx.font = `800 ${b.titleSize}px ${FONT}`;
+    ctx.fillText(b.title, PAD + BLOCK_PAD + b.accentW, by);
+    by += (isHw ? 25 : 22) + 4;
 
     ctx.font = `500 15px ${FONT}`;
     for (const line of b.lines) {
-      ctx.fillText(line, PAD + BLOCK_PAD + ACCENT_W, by);
+      ctx.fillText(line, PAD + BLOCK_PAD + b.accentW, by);
       by += 21;
     }
 

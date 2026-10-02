@@ -118,11 +118,18 @@ label.lbl { display: block; font-size: 0.8rem; font-weight: 700; color: var(--mu
 .savebar { position: sticky; bottom: 0; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg) 30%); display: flex; gap: 10px; }
 .savebar button { flex: 1; }
 
-.pblock { border-left: 6px solid; border-radius: 10px; padding: 10px 12px; background: #fff; }
-.pblock.good { border-color: var(--green); background: var(--green-soft); }
-.pblock.attention { border-color: var(--gold); background: var(--gold-soft); }
-.pblock h3 { margin: 0 0 4px; font-size: 0.95rem; }
-.pblock p { margin: 0; font-size: 0.95rem; }
+/* Each track gets its own color (matches the generated image) — tone (good/attention) shows as
+   a small badge instead of the block's base color, so the card reads as varied and lively. */
+.pblock { border-left: 6px solid; border-radius: 10px; padding: 10px 12px; background: #fff; position: relative; }
+.pblock.quran { border-color: #0f5257; background: #dcebe9; }
+.pblock.surah { border-color: #6a4c93; background: #ece3f5; }
+.pblock.dua { border-color: #c2447a; background: #fbe3ee; }
+.pblock.textbook { border-color: #b8611a; background: #f7e6d2; }
+.pblock.homework { border: 2.5px solid #e2572b; border-left: 10px solid #e2572b; background: #ffe4d2; box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
+.pblock h3 { margin: 0 0 4px; font-size: 0.95rem; font-weight: 800; }
+.pblock.homework h3 { font-size: 1.05rem; }
+.pblock p { margin: 0; font-size: 0.95rem; white-space: pre-line; }
+.pblock .tone-badge { position: absolute; top: 10px; right: 12px; font-size: 1rem; }
 pre.plain { white-space: pre-wrap; font: inherit; font-size: 0.9rem; background: #fff; border: 1px dashed var(--line); border-radius: 12px; padding: 12px; margin: 0; }
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 90px; background: var(--teal-dark); color: #fff; padding: 12px 18px; border-radius: 99px; font-weight: 700; z-index: 20; }

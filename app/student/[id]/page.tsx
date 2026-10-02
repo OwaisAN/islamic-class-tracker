@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import ParentCard from "@/components/ParentCard";
 import PosPicker from "@/components/PosPicker";
 import { getEntries, getSettings, getStudent, saveEntry, updateStudent } from "@/lib/data";
 import { clearLocalDraft, loadLocalDraft, saveLocalDraft } from "@/lib/localDraft";
 import {
   computeDuaIndex, computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex, duaEntryName,
-  duaStuck, effectiveDuaHomework, fmtRange, homeworkRange, HOMEWORK_STATUS_LABEL, prettyDate, priorEntries,
-  quranRange, quranStuck, sortDesc, surahEntryName, surahStuck, textbookBehind, textbookLabel, todayStr,
+  duaStuck, effectiveDuaHomework, effectiveSurahHomework, fmtRange, homeworkRange, HOMEWORK_STATUS_LABEL,
+  prettyDate, priorEntries, quranRange, quranStuck, sortDesc, statusLabel, surahEntryName, surahStuck,
+  textbookBehind, textbookLabel, todayStr, trackLabel,
 } from "@/lib/logic";
 import { ISSUES, LETTERS, SURAHS, SURAH_TRACK, surahTrackName } from "@/lib/quran";
 import type { ClassSettings, Entry, HomeworkStatus, Mode, Student } from "@/lib/types";
@@ -53,6 +54,7 @@ function resolveDraft(studentId: string, date: string, entries: Entry[], student
 
 const toggle = (arr: string[], v: string) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
 const HOMEWORK_STATUSES: HomeworkStatus[] = ["completed", "almost", "not_done"];
+type Section = "quran" | "surah" | "dua" | "textbook";
 
 export default function StudentPage() {
   const { id } = useParams<{ id: string }>();
@@ -66,6 +68,7 @@ export default function StudentPage() {
   const [draft, setDraft] = useState<Entry | null>(null);
   const [endTouched, setEndTouched] = useState(false);
   const [restored, setRestored] = useState(false);
+  const [openSection, setOpenSection] = useState<Section>("quran");
   const [showHist, setShowHist] = useState(false);
   const [showCard, setShowCard] = useState(false);
   const [toast, setToast] = useState("");
@@ -168,6 +171,14 @@ export default function StudentPage() {
     router.push("/");
   }
 
+  // Accordion: opening one of the four log sections auto-collapses the others.
+  const sectionProps = (name: Section) => ({
+    open: openSection === name,
+    onToggle: (e: SyntheticEvent<HTMLDetailsElement>) => {
+      if (e.currentTarget.open) setOpenSection(name);
+    },
+  });
+
   const qStuck = endTouched && quranStuck(d.quran.end, prior);
   const dStuck = duaStuck(d.dua, prior);
   const sStuck = surahStuck(d.surah, prior);
@@ -175,7 +186,8 @@ export default function StudentPage() {
   const duaName = (dua: Entry["dua"]) => duaEntryName(dua, settings.duaList);
   const hwRange = homeworkRange(prior, d.quran.start.mode);
   const priorDuaHw = prior ? effectiveDuaHomework(prior.dua, settings.duaList) : null;
-  const anyPriorHomework = Boolean(hwRange || prior?.surah.homework || priorDuaHw || prior?.textbook.homework);
+  const priorSurahHw = prior ? effectiveSurahHomework(prior.surah) : null;
+  const anyPriorHomework = Boolean(hwRange || priorSurahHw || priorDuaHw || prior?.textbook.homework);
 
   return (
     <>
@@ -210,14 +222,14 @@ export default function StudentPage() {
         {prior ? (
           <>
             <div>📖 {quranRange(prior)}</div>
-            <div>📗 {surahEntryName(prior.surah)} · {prior.surah.status === "mastered" ? "Mastered" : "Still working"}</div>
-            <div>🤲 {duaName(prior.dua)} · {prior.dua.status === "mastered" ? "Mastered" : "Still working"}</div>
-            <div>📚 Textbook: {textbookLabel(prior.textbook.status)}</div>
+            <div>🌙 {surahEntryName(prior.surah)} · {statusLabel(prior.surah.status)}</div>
+            <div>🤲 {duaName(prior.dua)} · {statusLabel(prior.dua.status)}</div>
+            <div>📝 Textbook: {textbookLabel(prior.textbook.status)}</div>
             {anyPriorHomework && (
               <div className="hw" style={{ marginTop: 10 }}>
-                <div className="hw-title">🎯 Homework set</div>
-                {hwRange && <div>Qur&apos;an: {fmtRange(hwRange)}</div>}
-                {prior.surah.homework && <div>Surah: {prior.surah.homework.name}</div>}
+                <div className="hw-title">🌟 Homework set</div>
+                {hwRange && <div>{trackLabel(prior.quran.end.mode)}: {fmtRange(hwRange)}</div>}
+                {priorSurahHw && <div>Surah: {priorSurahHw.name}</div>}
                 {priorDuaHw && <div>Dua: {priorDuaHw.name}</div>}
                 {prior.textbook.homework && <div>Textbook: {prior.textbook.homework}</div>}
               </div>
@@ -228,12 +240,12 @@ export default function StudentPage() {
 
       <div className="stack">
         {/* Qur'an */}
-        <details className="sect" open>
-          <summary>Qur&apos;an</summary>
+        <details className="sect" {...sectionProps("quran")}>
+          <summary>{trackLabel(d.quran.start.mode)}</summary>
           <div className="body">
             {hwRange && (
               <div className="hw">
-                <div className="hw-title">🎯 Homework was: {fmtRange(hwRange)}</div>
+                <div className="hw-title">🌟 Homework was: {fmtRange(hwRange)}</div>
                 <div className="seg warn" style={{ marginTop: 8 }}>
                   {HOMEWORK_STATUSES.map((s) => (
                     <button
@@ -293,7 +305,7 @@ export default function StudentPage() {
             </div>
 
             <div className="hw">
-              <div className="hw-title">🎯 Homework for next class</div>
+              <div className="hw-title">🌟 Homework for next class</div>
               {d.quran.homework ? (
                 <div className="stack" style={{ gap: 8 }}>
                   <PosPicker label="Read from" pos={d.quran.homework.from} onChange={(p) => patch((e) => { e.quran.homework!.from = p; })} />
@@ -308,7 +320,7 @@ export default function StudentPage() {
         </details>
 
         {/* Surahs */}
-        <details className="sect">
+        <details className="sect" {...sectionProps("surah")}>
           <summary>Surahs</summary>
           <div className="body">
             <div>
@@ -338,12 +350,12 @@ export default function StudentPage() {
             )}
             <div className="seg warn">
               <button className={d.surah.status === "working" ? "on" : ""} onClick={() => patch((e) => { e.surah.status = "working"; })}>Still working</button>
-              <button className={d.surah.status === "mastered" ? "on" : ""} style={d.surah.status === "mastered" ? { background: "var(--green)" } : undefined} onClick={() => patch((e) => { e.surah.status = "mastered"; })}>Mastered</button>
+              <button className={d.surah.status === "mastered" ? "on" : ""} style={d.surah.status === "mastered" ? { background: "var(--green)" } : undefined} onClick={() => patch((e) => { e.surah.status = "mastered"; })}>Complete</button>
             </div>
             {sStuck && <div className="warn-box">Same surah as last session and still working.</div>}
 
             <div className="hw">
-              <div className="hw-title">🎯 Homework for next class</div>
+              <div className="hw-title">🌟 Homework for next class</div>
               <select
                 value={!d.surah.homework ? "none" : d.surah.homework.custom ? "custom" : d.surah.homework.name}
                 onChange={(ev) => {
@@ -373,7 +385,7 @@ export default function StudentPage() {
         </details>
 
         {/* Duas */}
-        <details className="sect">
+        <details className="sect" {...sectionProps("dua")}>
           <summary>Duas</summary>
           <div className="body">
             <div>
@@ -408,12 +420,12 @@ export default function StudentPage() {
             )}
             <div className="seg warn">
               <button className={d.dua.status === "working" ? "on" : ""} onClick={() => patch((e) => { e.dua.status = "working"; })}>Still working</button>
-              <button className={d.dua.status === "mastered" ? "on" : ""} style={d.dua.status === "mastered" ? { background: "var(--green)" } : undefined} onClick={() => patch((e) => { e.dua.status = "mastered"; })}>Mastered</button>
+              <button className={d.dua.status === "mastered" ? "on" : ""} style={d.dua.status === "mastered" ? { background: "var(--green)" } : undefined} onClick={() => patch((e) => { e.dua.status = "mastered"; })}>Complete</button>
             </div>
             {dStuck && <div className="warn-box">Same dua as last session and still working.</div>}
 
             <div className="hw">
-              <div className="hw-title">🎯 Homework for next class</div>
+              <div className="hw-title">🌟 Homework for next class</div>
               <select
                 value={!d.dua.homework ? "none" : d.dua.homework.custom ? "custom" : d.dua.homework.name}
                 onChange={(ev) => {
@@ -444,7 +456,7 @@ export default function StudentPage() {
         </details>
 
         {/* Textbook */}
-        <details className="sect">
+        <details className="sect" {...sectionProps("textbook")}>
           <summary>Textbook · Chapter {d.textbook.chapter ?? settings.chapter}</summary>
           <div className="body">
             <div className="seg">
@@ -457,7 +469,7 @@ export default function StudentPage() {
 
             <div className="hw">
               <div className="hw-title">
-                🎯 {settings.nextChapter !== null ? `Homework: Move to Chapter ${settings.nextChapter}` : "Homework for next class"}
+                🌟 {settings.nextChapter !== null ? `Homework: Move to Chapter ${settings.nextChapter}` : "Homework for next class"}
               </div>
               {settings.nextChapter !== null && (
                 <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
@@ -481,19 +493,20 @@ export default function StudentPage() {
             {!entries.length && <p className="muted" style={{ margin: 0 }}>Nothing saved yet.</p>}
             {sortDesc(entries).map((e) => {
               const duaHw = effectiveDuaHomework(e.dua, settings.duaList);
-              const anyHomework = Boolean(e.quran.homework || e.surah.homework || duaHw || e.textbook.homework);
+              const surahHw = effectiveSurahHomework(e.surah);
+              const anyHomework = Boolean(e.quran.homework || surahHw || duaHw || e.textbook.homework);
               return (
                 <button key={e.date} className={`hist ${e.date === date ? "cur" : ""}`} onClick={() => goDate(e.date)}>
                   <b>{prettyDate(e.date)}</b>
                   <span>📖 {quranRange(e)}{e.quran.homeworkStatus ? ` · Homework: ${HOMEWORK_STATUS_LABEL[e.quran.homeworkStatus]}` : ""}</span>
-                  <span>📗 {surahEntryName(e.surah)} · {e.surah.status === "mastered" ? "Mastered" : "Working"}</span>
-                  <span>🤲 {duaName(e.dua)} · {e.dua.status === "mastered" ? "Mastered" : "Working"}</span>
-                  <span>📚 {textbookLabel(e.textbook.status)}</span>
+                  <span>🌙 {surahEntryName(e.surah)} · {statusLabel(e.surah.status)}</span>
+                  <span>🤲 {duaName(e.dua)} · {statusLabel(e.dua.status)}</span>
+                  <span>📝 {textbookLabel(e.textbook.status)}</span>
                   {anyHomework && (
                     <div className="hw" style={{ marginTop: 6, padding: "8px 10px" }}>
-                      <div className="hw-title" style={{ fontSize: "0.8rem" }}>🎯 Homework set</div>
-                      {e.quran.homework && <span>Qur&apos;an: {fmtRange(e.quran.homework)}</span>}
-                      {e.surah.homework && <span>Surah: {e.surah.homework.name}</span>}
+                      <div className="hw-title" style={{ fontSize: "0.8rem" }}>🌟 Homework set</div>
+                      {e.quran.homework && <span>{trackLabel(e.quran.end.mode)}: {fmtRange(e.quran.homework)}</span>}
+                      {surahHw && <span>Surah: {surahHw.name}</span>}
                       {duaHw && <span>Dua: {duaHw.name}</span>}
                       {e.textbook.homework && <span>Textbook: {e.textbook.homework}</span>}
                     </div>

@@ -87,6 +87,12 @@ export function defaultStart(prior: Entry | undefined, mode: Mode): Position {
   return emptyPosition(mode);
 }
 
+/** "Qaida" or "Qur'an" — whichever track a student is actually on, used anywhere the section is labeled. */
+export const trackLabel = (mode: Mode) => (mode === "qaida" ? "Qaida" : "Qur'an");
+
+/** The displayed status word — "Complete" reads better to parents than the internal "mastered" value. */
+export const statusLabel = (status: "mastered" | "working") => (status === "mastered" ? "Complete" : "Working");
+
 // ---------- stuck detection ----------
 export function quranStuck(end: Position, prior: Entry | undefined): boolean {
   if (!prior) return false;
@@ -217,6 +223,13 @@ export function surahEntryName(surah: Entry["surah"]): string {
   return surah.custom ? SURAHS[surah.customSurah ?? 0]?.name ?? "?" : surahTrackName(surah.trackIndexAtEntry);
 }
 
+/** Same idea as effectiveDuaHomework: a not-yet-complete surah IS its own homework by default. */
+export function effectiveSurahHomework(surah: Entry["surah"]): NamedHomework | null {
+  if (surah.homework) return surah.homework;
+  if (surah.status === "working") return { name: surahEntryName(surah), custom: surah.custom };
+  return null;
+}
+
 // ---------- summaries ----------
 export function quranRange(e: Entry): string {
   return `${fmtPos(e.quran.start)} → ${fmtPos(e.quran.end)}`;
@@ -226,7 +239,10 @@ const TEXTBOOK_LABEL = { done: "Done", partial: "Partly done", not_done: "Not do
 export const textbookLabel = (s: Entry["textbook"]["status"]) => TEXTBOOK_LABEL[s];
 
 // ---------- parent update ----------
+export type BlockKind = "quran" | "surah" | "dua" | "textbook" | "homework";
+
 export interface ParentBlock {
+  kind: BlockKind;
   title: string;
   tone: "good" | "attention";
   text: string;
@@ -258,13 +274,14 @@ export function buildParentUpdate(
   else if (q.homeworkStatus === "not_done") qLine = `⚠️ Missed homework · ${qLine}`;
   const qAttention = qTags.length > 0 || q.homeworkStatus === "not_done" || q.homeworkStatus === "almost";
 
+  const track = trackLabel(q.end.mode);
   const surahName = surahEntryName(entry.surah);
   const sStuck = surahStuck(entry.surah, prior);
-  const sLine = `${surahName} — ${entry.surah.status === "mastered" ? "Mastered" : "Working"}${sStuck ? " · No progress" : ""}`;
+  const sLine = `${surahName} — ${statusLabel(entry.surah.status)}${sStuck ? " · No progress" : ""}`;
 
   const duaName = duaEntryName(entry.dua, duaList);
   const dStuck = duaStuck(entry.dua, prior);
-  const dLine = `${duaName} — ${entry.dua.status === "mastered" ? "Mastered" : "Working"}${dStuck ? " · No progress" : ""}`;
+  const dLine = `${duaName} — ${statusLabel(entry.dua.status)}${dStuck ? " · No progress" : ""}`;
 
   const tb = entry.textbook;
   const ch = tb.chapter ?? chapter;
@@ -272,16 +289,17 @@ export function buildParentUpdate(
   if (tb.note.trim()) tLine += ` · ${tb.note.trim()}`;
 
   const blocks: ParentBlock[] = [
-    { title: "📖 Qur'an", tone: qAttention ? "attention" : "good", text: qLine },
-    { title: "📗 Surah", tone: entry.surah.status === "mastered" ? "good" : "attention", text: sLine },
-    { title: "🤲 Dua", tone: entry.dua.status === "mastered" ? "good" : "attention", text: dLine },
-    { title: "📚 Textbook", tone: tb.status === "done" ? "good" : "attention", text: tLine },
+    { kind: "quran", title: `📖 ${track}`, tone: qAttention ? "attention" : "good", text: qLine },
+    { kind: "surah", title: "🌙 Surah", tone: entry.surah.status === "mastered" ? "good" : "attention", text: sLine },
+    { kind: "dua", title: "🤲 Dua", tone: entry.dua.status === "mastered" ? "good" : "attention", text: dLine },
+    { kind: "textbook", title: "📝 Textbook", tone: tb.status === "done" ? "good" : "attention", text: tLine },
   ];
 
   // All three tracks' homework in one bubble, so parents see the full to-do list at a glance.
   const hwLines: string[] = [];
-  if (q.homework) hwLines.push(`Qur'an: read from ${fmtPos(q.homework.from)} to ${fmtPos(q.homework.to)}`);
-  if (entry.surah.homework) hwLines.push(`Surah: ${entry.surah.homework.name}`);
+  if (q.homework) hwLines.push(`${track}: read from ${fmtPos(q.homework.from)} to ${fmtPos(q.homework.to)}`);
+  const surahHw = effectiveSurahHomework(entry.surah);
+  if (surahHw) hwLines.push(`Surah: ${surahHw.name}`);
   const duaHw = effectiveDuaHomework(entry.dua, duaList);
   if (duaHw) hwLines.push(`Dua: ${duaHw.name}`);
   // The chapter move is classwide and applies no matter whether this student finished today's
@@ -291,7 +309,7 @@ export function buildParentUpdate(
   if (nextChapter !== null) tbHwParts.push(`Move to Chapter ${nextChapter}`);
   if (tb.homework) tbHwParts.push(tb.homework);
   if (tbHwParts.length) hwLines.push(`Textbook: ${tbHwParts.join(" · ")}`);
-  if (hwLines.length) blocks.push({ title: "🎯 Homework for next class", tone: "attention", text: hwLines.join("\n") });
+  if (hwLines.length) blocks.push({ kind: "homework", title: "🌟 Homework for next class", tone: "attention", text: hwLines.join("\n") });
 
   const plain = [
     `Assalamu alaikum! ${name}'s update from ${prettyDate(entry.date)}:`,

@@ -124,9 +124,10 @@ export default function ParentCard({
         )}
 
         {blocks.map((b) => (
-          <div key={b.title} className={`pblock ${b.tone}`}>
+          <div key={b.title} className={`pblock ${b.kind}`}>
+            <span className="tone-badge">{b.tone === "good" ? "✅" : "🟠"}</span>
             <h3>{b.title}</h3>
-            <p style={{ whiteSpace: "pre-line" }}>{b.text}</p>
+            <p>{b.text}</p>
           </div>
         ))}
 
