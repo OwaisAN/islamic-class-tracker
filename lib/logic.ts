@@ -170,6 +170,17 @@ export function duaEntryName(dua: Entry["dua"], duaList: string[]): string {
   return dua.duaNameAtEntry ?? duaList[dua.duaIndexAtEntry] ?? "the current dua";
 }
 
+/**
+ * The dua homework to show for this session: whatever was explicitly set, or — if nothing
+ * was set and the dua isn't mastered yet — the dua itself, since "still working on it" IS the
+ * homework by default. An explicit choice always wins over this fallback.
+ */
+export function effectiveDuaHomework(dua: Entry["dua"], duaList: string[]): NamedHomework | null {
+  if (dua.homework) return dua.homework;
+  if (dua.status === "working") return { name: duaEntryName(dua, duaList), custom: dua.custom };
+  return null;
+}
+
 // ---------- surah track default, stuck & auto-advance ----------
 // A custom-surah entry never advances or regresses the track; it's a one-off
 // for that session and is skipped when computing defaults/streaks.
@@ -271,7 +282,8 @@ export function buildParentUpdate(
   const hwLines: string[] = [];
   if (q.homework) hwLines.push(`Qur'an: read from ${fmtPos(q.homework.from)} to ${fmtPos(q.homework.to)}`);
   if (entry.surah.homework) hwLines.push(`Surah: ${entry.surah.homework.name}`);
-  if (entry.dua.homework) hwLines.push(`Dua: ${entry.dua.homework.name}`);
+  const duaHw = effectiveDuaHomework(entry.dua, duaList);
+  if (duaHw) hwLines.push(`Dua: ${duaHw.name}`);
   // The chapter move is classwide and applies no matter whether this student finished today's
   // chapter — it's about what's next, not a reward for completion. A per-student note (if any)
   // rides alongside it.

@@ -9,8 +9,8 @@ import { getEntries, getSettings, getStudent, saveEntry, updateStudent } from "@
 import { clearLocalDraft, loadLocalDraft, saveLocalDraft } from "@/lib/localDraft";
 import {
   computeDuaIndex, computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex, duaEntryName,
-  duaStuck, fmtRange, homeworkRange, HOMEWORK_STATUS_LABEL, prettyDate, priorEntries, quranRange, quranStuck,
-  sortDesc, surahEntryName, surahStuck, textbookBehind, textbookLabel, todayStr,
+  duaStuck, effectiveDuaHomework, fmtRange, homeworkRange, HOMEWORK_STATUS_LABEL, prettyDate, priorEntries,
+  quranRange, quranStuck, sortDesc, surahEntryName, surahStuck, textbookBehind, textbookLabel, todayStr,
 } from "@/lib/logic";
 import { ISSUES, LETTERS, SURAHS, SURAH_TRACK, surahTrackName } from "@/lib/quran";
 import type { ClassSettings, Entry, HomeworkStatus, Mode, Student } from "@/lib/types";
@@ -174,7 +174,8 @@ export default function StudentPage() {
   const tBehind = textbookBehind(priors);
   const duaName = (dua: Entry["dua"]) => duaEntryName(dua, settings.duaList);
   const hwRange = homeworkRange(prior, d.quran.start.mode);
-  const anyPriorHomework = Boolean(hwRange || prior?.surah.homework || prior?.dua.homework || prior?.textbook.homework);
+  const priorDuaHw = prior ? effectiveDuaHomework(prior.dua, settings.duaList) : null;
+  const anyPriorHomework = Boolean(hwRange || prior?.surah.homework || priorDuaHw || prior?.textbook.homework);
 
   return (
     <>
@@ -217,7 +218,7 @@ export default function StudentPage() {
                 <div className="hw-title">🎯 Homework set</div>
                 {hwRange && <div>Qur&apos;an: {fmtRange(hwRange)}</div>}
                 {prior.surah.homework && <div>Surah: {prior.surah.homework.name}</div>}
-                {prior.dua.homework && <div>Dua: {prior.dua.homework.name}</div>}
+                {priorDuaHw && <div>Dua: {priorDuaHw.name}</div>}
                 {prior.textbook.homework && <div>Textbook: {prior.textbook.homework}</div>}
               </div>
             )}
@@ -479,7 +480,8 @@ export default function StudentPage() {
           <div className="body">
             {!entries.length && <p className="muted" style={{ margin: 0 }}>Nothing saved yet.</p>}
             {sortDesc(entries).map((e) => {
-              const anyHomework = Boolean(e.quran.homework || e.surah.homework || e.dua.homework || e.textbook.homework);
+              const duaHw = effectiveDuaHomework(e.dua, settings.duaList);
+              const anyHomework = Boolean(e.quran.homework || e.surah.homework || duaHw || e.textbook.homework);
               return (
                 <button key={e.date} className={`hist ${e.date === date ? "cur" : ""}`} onClick={() => goDate(e.date)}>
                   <b>{prettyDate(e.date)}</b>
@@ -492,7 +494,7 @@ export default function StudentPage() {
                       <div className="hw-title" style={{ fontSize: "0.8rem" }}>🎯 Homework set</div>
                       {e.quran.homework && <span>Qur&apos;an: {fmtRange(e.quran.homework)}</span>}
                       {e.surah.homework && <span>Surah: {e.surah.homework.name}</span>}
-                      {e.dua.homework && <span>Dua: {e.dua.homework.name}</span>}
+                      {duaHw && <span>Dua: {duaHw.name}</span>}
                       {e.textbook.homework && <span>Textbook: {e.textbook.homework}</span>}
                     </div>
                   )}

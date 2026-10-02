@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  comparePos, quranStuck, duaStuck, duaEntryName, surahStuck, textbookBehind, computeDuaIndex, computeSurahTrackIndex,
-  defaultDuaIndex, defaultStart, defaultSurahTrackIndex, homeworkRange, fmtRange, rollChapterForDate, buildParentUpdate,
-  normalizeEntry,
+  comparePos, quranStuck, duaStuck, duaEntryName, effectiveDuaHomework, surahStuck, textbookBehind, computeDuaIndex,
+  computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex, homeworkRange, fmtRange,
+  rollChapterForDate, buildParentUpdate, normalizeEntry,
 } from "./logic.ts";
 import { SURAHS, SURAH_TRACK } from "./quran.ts";
 import type { Entry, Position } from "./types.ts";
@@ -120,11 +120,23 @@ test("parent update: terse per-track lines, all homework merged into one bubble"
   assert.match(hw.text, /Textbook: Finish exercise 3/);
   assert.match(plain, /Saad/);
 });
-test("parent update omits the homework bubble when nothing was assigned", () => {
-  const e = mk("2026-01-10", q(1, 20));
+test("parent update omits the homework bubble only when truly nothing applies", () => {
+  // A "still working" dua always has an implicit homework (see effectiveDuaHomework),
+  // so this needs mastered dua/surah too for the bubble to have nothing to show.
+  const e = mk("2026-01-10", q(1, 20), {
+    dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: false, customDua: null, status: "mastered", homework: null },
+    surah: { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "mastered", homework: null },
+  });
   const { blocks } = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3);
   assert.equal(blocks.length, 4);
   assert.ok(!blocks.some((b) => b.title.includes("Homework")));
+});
+test("parent update: a still-working dua with no explicit homework shows itself as the homework", () => {
+  const e = mk("2026-01-10", q(1, 20)); // default dua: duaIndexAtEntry 0, status "working", no homework set
+  const { blocks } = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3);
+  const hw = blocks[blocks.length - 1];
+  assert.equal(hw.title, "🎯 Homework for next class");
+  assert.match(hw.text, /Dua: Before eating/);
 });
 test("chapter move is always included regardless of this student's completion status", () => {
   const incomplete = mk("2026-01-10", q(1, 20), { textbook: { status: "not_done", note: "", homework: null } });
@@ -142,8 +154,11 @@ test("chapter move is always included regardless of this student's completion st
   const { blocks: c } = buildParentUpdate("Ali", withNote, undefined, ["Before eating"], 3, 4);
   assert.match(c[c.length - 1].text, /Textbook: Move to Chapter 4 · Also finish page 12/);
 
-  // With no "Up next" set, nothing is assumed.
-  const noNext = mk("2026-01-10", q(1, 20));
+  // With no "Up next" set (and nothing else pending), nothing is assumed.
+  const noNext = mk("2026-01-10", q(1, 20), {
+    dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: false, customDua: null, status: "mastered", homework: null },
+    surah: { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "mastered", homework: null },
+  });
   const { blocks: d } = buildParentUpdate("Ali", noNext, undefined, ["Before eating"], 3, null);
   assert.ok(!d.some((bl) => bl.title.includes("Homework")));
 });
@@ -174,4 +189,17 @@ test("normalizeEntry repairs a stale draft's pre-range Qur'an homework so picker
   });
   const fixedPartial = normalizeEntry(partial);
   assert.deepEqual(fixedPartial.quran.homework, { from: qa(3, 5), to: qa(3, 5) });
+});
+test("effectiveDuaHomework: still-working defaults to the current dua; an explicit choice or mastery override that", () => {
+  const working = { duaIndexAtEntry: 1, duaNameAtEntry: "After eating", custom: false, customDua: null, status: "working" as const, homework: null };
+  assert.deepEqual(effectiveDuaHomework(working, ["Before eating", "After eating"]), { name: "After eating", custom: false });
+
+  const mastered = { ...working, status: "mastered" as const };
+  assert.equal(effectiveDuaHomework(mastered, ["Before eating", "After eating"]), null);
+
+  const explicit = { ...working, homework: { name: "Before sleeping", custom: false } };
+  assert.deepEqual(effectiveDuaHomework(explicit, ["Before eating", "After eating"]), { name: "Before sleeping", custom: false });
+
+  const customDua = { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: true, customDua: "Dua for parents", status: "working" as const, homework: null };
+  assert.deepEqual(effectiveDuaHomework(customDua, []), { name: "Dua for parents", custom: true });
 });
