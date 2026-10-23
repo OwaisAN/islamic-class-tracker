@@ -20,7 +20,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Noto+Naskh+Arabic:wght@500;700&display=swap"
         />
       </head>
-      <body>
+      {/* Browser extensions (e.g. Grammarly) add attributes to <body> before React loads. */}
+      <body suppressHydrationWarning>
         <main className="wrap">{children}</main>
       </body>
     </html>

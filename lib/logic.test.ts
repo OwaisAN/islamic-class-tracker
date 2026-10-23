@@ -4,8 +4,11 @@ import {
   comparePos, quranStuck, duaStuck, duaEntryName, effectiveDuaHomework, effectiveSurahHomework, surahStuck,
   textbookBehind, computeDuaIndex, computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex,
   homeworkRange, fmtRange, rollChapterForDate, buildParentUpdate, normalizeEntry, statusLabel, trackLabel,
+  isRec, fullRecorded, priorWith, deriveQuranEnd, HOMEWORK_STATUS_LABEL, textbookLabel, daysAgoStr, reviewDraft,
 } from "./logic.ts";
 import { SURAHS, SURAH_TRACK } from "./quran.ts";
+import { buildDraft } from "./draft.ts";
+import { getRecent, setRecent, updateRecent, upsertEntry } from "./store.ts";
 import type { Entry, Position } from "./types.ts";
 
 const q = (surah: number, ayah: number): Position => ({ mode: "quran", page: null, line: null, surah, ayah });
@@ -104,8 +107,8 @@ test("default start", () => {
 test("parent update: terse per-track lines, all homework merged into one bubble", () => {
   const e = mk("2026-01-10", q(1, 20), {
     quran: { start: q(1, 10), end: q(1, 20), letters: ["saad"], issues: ["over"], hesitation: true, note: "", homework: { from: q(1, 20), to: q(2, 1) }, homeworkStatus: null },
-    surah: { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "working", homework: { name: "An-Nas", custom: false } },
-    dua: { duaIndexAtEntry: 0, duaNameAtEntry: "Before eating", custom: false, customDua: null, status: "working", homework: { name: "Before sleeping", custom: false } },
+    surah: { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "working", homework: [{ name: "An-Nas", custom: false }] },
+    dua: { duaIndexAtEntry: 0, duaNameAtEntry: "Before eating", custom: false, customDua: null, status: "working", homework: [{ name: "Before sleeping", custom: false }] },
     textbook: { status: "done", note: "", homework: "Finish exercise 3" },
   });
   const { blocks, plain } = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3);
@@ -190,28 +193,39 @@ test("normalizeEntry repairs a stale draft's pre-range Qur'an homework so picker
   const fixedPartial = normalizeEntry(partial);
   assert.deepEqual(fixedPartial.quran.homework, { from: qa(3, 5), to: qa(3, 5) });
 });
-test("effectiveDuaHomework: still-working defaults to the current dua; an explicit choice or mastery override that", () => {
-  const working = { duaIndexAtEntry: 1, duaNameAtEntry: "After eating", custom: false, customDua: null, status: "working" as const, homework: null };
-  assert.deepEqual(effectiveDuaHomework(working, ["Before eating", "After eating"]), { name: "After eating", custom: false });
+test("effectiveDuaHomework: a still-working dua is its own homework; a list, mastery or being unrecorded override that", () => {
+  const list = ["Before eating", "After eating"];
+  const working = mk("2026-01-01", q(0, 1), { dua: { duaIndexAtEntry: 1, duaNameAtEntry: "After eating", custom: false, customDua: null, status: "working", homework: null } });
+  assert.deepEqual(effectiveDuaHomework(working, list), [{ name: "After eating", custom: false }]);
 
-  const mastered = { ...working, status: "mastered" as const };
-  assert.equal(effectiveDuaHomework(mastered, ["Before eating", "After eating"]), null);
+  const mastered = mk("2026-01-01", q(0, 1), { dua: { ...working.dua, status: "mastered" } });
+  assert.deepEqual(effectiveDuaHomework(mastered, list), []);
 
-  const explicit = { ...working, homework: { name: "Before sleeping", custom: false } };
-  assert.deepEqual(effectiveDuaHomework(explicit, ["Before eating", "After eating"]), { name: "Before sleeping", custom: false });
+  const explicit = mk("2026-01-01", q(0, 1), { dua: { ...working.dua, homework: [{ name: "Before sleeping", custom: false }, { name: "Before eating", custom: false }] } });
+  assert.deepEqual(effectiveDuaHomework(explicit, list).map((h) => h.name), ["Before sleeping", "Before eating"]);
 
-  const customDua = { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: true, customDua: "Dua for parents", status: "working" as const, homework: null };
-  assert.deepEqual(effectiveDuaHomework(customDua, []), { name: "Dua for parents", custom: true });
+  // An explicit empty list means "none", and beats the automatic default.
+  const none = mk("2026-01-01", q(0, 1), { dua: { ...working.dua, homework: [] } });
+  assert.deepEqual(effectiveDuaHomework(none, list), []);
+
+  const customDua = mk("2026-01-01", q(0, 1), { dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: true, customDua: "Dua for parents", status: "working", homework: null } });
+  assert.deepEqual(effectiveDuaHomework(customDua, []), [{ name: "Dua for parents", custom: true }]);
+
+  const unrecorded = mk("2026-01-01", q(0, 1), { recorded: { quran: true, surah: true, dua: false, textbook: true } });
+  assert.deepEqual(effectiveDuaHomework(unrecorded, list), []);
 });
-test("effectiveSurahHomework: still-working defaults to the current surah; mastery or an explicit choice override that", () => {
-  const working = { trackIndexAtEntry: 1, custom: false, customSurah: null, status: "working" as const, homework: null };
-  assert.deepEqual(effectiveSurahHomework(working), { name: "An-Nas", custom: false });
+test("effectiveSurahHomework: same rules as duas", () => {
+  const working = mk("2026-01-01", q(0, 1), { surah: { trackIndexAtEntry: 1, custom: false, customSurah: null, status: "working", homework: null } });
+  assert.deepEqual(effectiveSurahHomework(working), [{ name: "An-Nas", custom: false }]);
 
-  const complete = { ...working, status: "mastered" as const };
-  assert.equal(effectiveSurahHomework(complete), null);
+  const complete = mk("2026-01-01", q(0, 1), { surah: { ...working.surah, status: "mastered" } });
+  assert.deepEqual(effectiveSurahHomework(complete), []);
 
-  const explicit = { ...working, homework: { name: "Al-Falaq", custom: false } };
-  assert.deepEqual(effectiveSurahHomework(explicit), { name: "Al-Falaq", custom: false });
+  const explicit = mk("2026-01-01", q(0, 1), { surah: { ...working.surah, homework: [{ name: "Al-Falaq", custom: false }, { name: "Al-Ikhlas", custom: false }] } });
+  assert.deepEqual(effectiveSurahHomework(explicit).map((h) => h.name), ["Al-Falaq", "Al-Ikhlas"]);
+
+  const unrecorded = mk("2026-01-01", q(0, 1), { recorded: { quran: true, surah: false, dua: true, textbook: true } });
+  assert.deepEqual(effectiveSurahHomework(unrecorded), []);
 });
 test("trackLabel and statusLabel read naturally for both tracks and the renamed status", () => {
   assert.equal(trackLabel("qaida"), "Qaida");
@@ -228,4 +242,140 @@ test("parent update block kinds match their section, for per-section image/card 
   assert.deepEqual(blocks.map((b) => b.kind), ["quran", "surah", "dua", "textbook"]);
   // On Qaida, the Qur'an block is labeled "Qaida", not "Qur'an".
   assert.match(blocks[0].title, /Qaida/);
+});
+
+test("normalizeEntry turns single-item dua/surah homework (and old plain strings) into lists, and leaves null automatic", () => {
+  const old = mk("2026-01-01", q(0, 1), {
+    dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: false, customDua: null, status: "working", homework: { name: "Before eating", custom: false } as unknown as null },
+    surah: { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "working", homework: "An-Nas" as unknown as null },
+  });
+  const fixed = normalizeEntry(old);
+  assert.deepEqual(fixed.dua.homework, [{ name: "Before eating", custom: false }]);
+  assert.deepEqual(fixed.surah.homework, [{ name: "An-Nas", custom: true }]);
+  assert.equal(normalizeEntry(mk("2026-01-01", q(0, 1))).dua.homework, null);
+  assert.deepEqual(normalizeEntry(mk("2026-01-01", q(0, 1), { dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: false, customDua: null, status: "working", homework: [] } })).dua.homework, []);
+});
+test("entries saved before the recorded flags existed count as fully recorded", () => {
+  const legacy = mk("2026-01-01", q(0, 1));
+  assert.equal(legacy.recorded, undefined);
+  for (const sec of ["quran", "surah", "dua", "textbook"] as const) assert.ok(isRec(legacy, sec));
+  assert.deepEqual(fullRecorded(legacy), { quran: true, surah: true, dua: true, textbook: true });
+  const partial = mk("2026-01-01", q(0, 1), { recorded: { quran: false, surah: true, dua: false, textbook: false } });
+  assert.ok(isRec(partial, "surah") && !isRec(partial, "dua"));
+});
+test("progress and defaults ignore sessions where that section was never recorded", () => {
+  const done = mk("2026-01-01", q(0, 1), { dua: { duaIndexAtEntry: 1, duaNameAtEntry: null, custom: false, customDua: null, status: "mastered", homework: null } });
+  // A later entry whose dua is just an untouched default must not count as a dua session.
+  const blank = mk("2026-01-08", q(0, 1), {
+    recorded: { quran: true, surah: false, dua: false, textbook: false },
+    dua: { duaIndexAtEntry: 0, duaNameAtEntry: null, custom: false, customDua: null, status: "working", homework: null },
+  });
+  assert.equal(computeDuaIndex([done, blank], 5), 2);
+  assert.equal(defaultDuaIndex([done, blank], "2026-01-15", 0, 5), 2);
+  assert.equal(priorWith([blank, done], "dua"), done);
+  // Textbook "falling behind" needs two recorded misses, not two entries.
+  const miss = (d: string, rec: boolean) => mk(d, q(0, 1), { recorded: { quran: true, surah: true, dua: true, textbook: rec }, textbook: { status: "not_done", note: "", homework: null } });
+  assert.ok(!textbookBehind([miss("3", false), miss("2", true)]));
+  assert.ok(textbookBehind([miss("3", true), miss("2", true)]));
+});
+test("parent update leaves out sections that were never recorded, along with their homework", () => {
+  const e = mk("2026-01-10", q(1, 20), {
+    recorded: { quran: false, surah: true, dua: false, textbook: false },
+    surah: { trackIndexAtEntry: 1, custom: false, customSurah: null, status: "working", homework: null },
+  });
+  const { blocks, plain } = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3, 4);
+  assert.deepEqual(blocks.map((b) => b.kind), ["surah", "homework"]);
+  const hw = blocks[1];
+  assert.match(hw.text, /Surah: An-Nas/);
+  assert.ok(!/Dua|Textbook|Chapter/.test(hw.text));
+  assert.ok(!/Before eating/.test(plain));
+});
+test("parent update lists every surah and dua assigned as homework", () => {
+  const e = mk("2026-01-10", q(1, 20), {
+    surah: { trackIndexAtEntry: 1, custom: false, customSurah: null, status: "working", homework: [{ name: "An-Nas", custom: false }, { name: "Al-Falaq", custom: false }] },
+    dua: { duaIndexAtEntry: 0, duaNameAtEntry: "Before eating", custom: false, customDua: null, status: "working", homework: [{ name: "Before sleeping", custom: false }, { name: "After eating", custom: false }] },
+  });
+  const hw = buildParentUpdate("Ali", e, undefined, ["Before eating"], 3).blocks.at(-1)!;
+  assert.match(hw.text, /Surah: An-Nas, Al-Falaq/);
+  assert.match(hw.text, /Dua: Before sleeping, After eating/);
+});
+test("deriveQuranEnd: complete reaches the end of last homework, incomplete makes no progress, partial stops where the next homework starts", () => {
+  const range = { from: q(1, 10), to: q(1, 25) };
+  const start = q(1, 10);
+  assert.deepEqual(deriveQuranEnd("completed", start, range, null), q(1, 25));
+  assert.deepEqual(deriveQuranEnd("not_done", start, range, null), start);
+  assert.deepEqual(deriveQuranEnd("almost", start, range, null), start);
+  assert.deepEqual(deriveQuranEnd("almost", start, range, { from: q(1, 17), to: q(1, 30) }), q(1, 17));
+  // Nothing was assigned last time, so there is nothing to have completed.
+  assert.deepEqual(deriveQuranEnd("completed", start, null, null), start);
+  assert.deepEqual(deriveQuranEnd(null, start, range, null), start);
+});
+test("labels: complete / partial / incomplete everywhere", () => {
+  assert.equal(HOMEWORK_STATUS_LABEL.completed, "Complete");
+  assert.equal(HOMEWORK_STATUS_LABEL.almost, "Partial");
+  assert.equal(HOMEWORK_STATUS_LABEL.not_done, "Incomplete");
+  assert.equal(textbookLabel("done"), "Complete");
+  assert.equal(textbookLabel("partial"), "Partial");
+  assert.equal(textbookLabel("not_done"), "Incomplete");
+  assert.equal(daysAgoStr(7, new Date(2026, 9, 11)), "2026-10-04");
+});
+
+const hasUndefined = (v: unknown): boolean =>
+  v === undefined || (typeof v === "object" && v !== null && Object.values(v).some(hasUndefined));
+test("an entry is always safe to write to Firestore (no undefined values anywhere), fresh or legacy", () => {
+  const student = { id: "s", name: "Ali", mode: "qaida" as const, duaIndex: 0, surahTrackIndex: 0, active: true };
+  const settings = { chapter: 3, nextChapter: null, lastSessionDate: null, duaList: ["Before eating"] };
+  const fresh = buildDraft("s", "2026-01-10", [], student, settings);
+  assert.ok(!hasUndefined(normalizeEntry(fresh)));
+  assert.deepEqual(fresh.recorded, { quran: false, surah: false, dua: false, textbook: false });
+  assert.ok(!hasUndefined(normalizeEntry({ ...fresh, recorded: { ...fresh.recorded!, surah: true } })));
+  const legacy = normalizeEntry(mk("2026-01-01", q(0, 1)));
+  assert.ok(!hasUndefined(legacy));
+  assert.ok(!("recorded" in legacy));
+});
+test("a fresh draft ignores earlier sessions where its sections were never recorded", () => {
+  const student = { id: "s", name: "Ali", mode: "quran" as const, duaIndex: 0, surahTrackIndex: 0, active: true };
+  const settings = { chapter: 3, nextChapter: null, lastSessionDate: null, duaList: ["A", "B", "C"] };
+  const recorded = mk("2026-01-01", q(1, 20), { dua: { duaIndexAtEntry: 1, duaNameAtEntry: "B", custom: false, customDua: null, status: "mastered", homework: null } });
+  const blank = mk("2026-01-08", q(0, 1), { recorded: { quran: false, surah: false, dua: false, textbook: false } });
+  const draft = buildDraft("s", "2026-01-15", [recorded, blank], student, settings);
+  assert.equal(draft.dua.duaIndexAtEntry, 2); // advances from the recorded session, not the blank one
+  assert.deepEqual(draft.quran.start, q(1, 20)); // starts where the last recorded reading ended
+});
+
+test("reviewDraft: only touched or edited sections count as recorded, and dirty means something is unsaved", () => {
+  const student = { id: "s", name: "Ali", mode: "quran" as const, duaIndex: 0, surahTrackIndex: 0, active: true };
+  const settings = { chapter: 3, nextChapter: null, lastSessionDate: null, duaList: ["A", "B"] };
+  const base = buildDraft("s", "2026-01-10", [], student, settings);
+
+  // Untouched: nothing recorded, nothing to save.
+  const untouched = reviewDraft(structuredClone(base), base, []);
+  assert.deepEqual(untouched.recorded, { quran: false, surah: false, dua: false, textbook: false });
+  assert.equal(untouched.dirty, false);
+
+  // Editing a section records exactly that section.
+  const edited = structuredClone(base);
+  edited.surah.status = "mastered";
+  assert.deepEqual(reviewDraft(edited, base, []).recorded, { quran: false, surah: true, dua: false, textbook: false });
+  assert.equal(reviewDraft(edited, base, []).dirty, true);
+
+  // Tapping a button that matches the default still records that section.
+  const tapped = reviewDraft(structuredClone(base), base, ["dua"]);
+  assert.equal(tapped.recorded.dua, true);
+  assert.equal(tapped.dirty, true);
+
+  // Once saved (base now says recorded), tapping again changes nothing — no endless re-saving.
+  const saved = { ...structuredClone(base), recorded: { ...base.recorded!, dua: true } };
+  assert.equal(reviewDraft(structuredClone(saved), saved, ["dua"]).dirty, false);
+});
+test("the shared store replaces an entry for the same student and date instead of duplicating it", () => {
+  const a = mk("2026-01-10", q(0, 1));
+  setRecent([a, { ...mk("2026-01-03", q(0, 1)), studentId: "other" }]);
+  upsertEntry({ ...a, textbook: { ...a.textbook, status: "not_done" } });
+  const forS = getRecent().filter((e) => e.studentId === "s" && e.date === "2026-01-10");
+  assert.equal(forS.length, 1);
+  assert.equal(forS[0].textbook.status, "not_done");
+  assert.equal(getRecent().length, 2);
+  updateRecent(() => []);
+  assert.deepEqual(getRecent(), []);
 });

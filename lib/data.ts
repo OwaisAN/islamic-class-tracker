@@ -1,6 +1,6 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 import {
-  collection, doc, getDoc, getDocs, getFirestore, query, setDoc, updateDoc, where,
+  collection, doc, getDoc, getDocs, getFirestore, query, setDoc, updateDoc, waitForPendingWrites, where,
 } from "firebase/firestore";
 import type { ClassSettings, Entry, Mode, Student } from "./types";
 import { DEFAULT_DUAS } from "./quran";
@@ -20,6 +20,15 @@ const app = getApps().length
       appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
     });
 const db = getFirestore(app);
+
+/**
+ * Reads wait (briefly) for this device's own unsent saves to reach the server first. Without that, a
+ * screen that loads right after a save can fetch the old data and show it as if nothing changed. The
+ * wait is capped so a bad connection can never leave a screen stuck on "Loading…".
+ */
+async function afterOwnWrites() {
+  await Promise.race([waitForPendingWrites(db).catch(() => undefined), new Promise((r) => setTimeout(r, 3000))]);
+}
 
 // All access goes through this module so a teacherId filter / auth can be added in one place later.
 
@@ -55,11 +64,13 @@ export async function saveSettings(patch: Partial<ClassSettings>) {
 
 // ----- students -----
 export async function getStudents(): Promise<Student[]> {
+  await afterOwnWrites();
   const snap = await getDocs(collection(db, "students"));
   return snap.docs.map((d) => ({ id: d.id, ...withDefaults(d.data() as Omit<Student, "id">) }));
 }
 
 export async function getStudent(id: string): Promise<Student | null> {
+  await afterOwnWrites();
   const snap = await getDoc(doc(db, "students", id));
   return snap.exists() ? { id: snap.id, ...withDefaults(snap.data() as Omit<Student, "id">) } : null;
 }
@@ -76,7 +87,18 @@ export async function updateStudent(id: string, patch: Partial<Omit<Student, "id
 
 // ----- entries -----
 export async function getEntries(studentId: string): Promise<Entry[]> {
+  await afterOwnWrites();
   const snap = await getDocs(query(collection(db, "entries"), where("studentId", "==", studentId)));
+  return snap.docs.map((d) => normalizeEntry(d.data() as Entry));
+}
+
+/**
+ * Every student's entries from `sinceDate` on, in one query — enough history for the per-section
+ * lists to show each student's last homework without reading the whole collection.
+ */
+export async function getRecentEntries(sinceDate: string): Promise<Entry[]> {
+  await afterOwnWrites();
+  const snap = await getDocs(query(collection(db, "entries"), where("date", ">=", sinceDate)));
   return snap.docs.map((d) => normalizeEntry(d.data() as Entry));
 }
 

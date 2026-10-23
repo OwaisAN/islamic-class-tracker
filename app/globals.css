@@ -135,3 +135,48 @@ pre.plain { white-space: pre-wrap; font: inherit; font-size: 0.9rem; background:
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 90px; background: var(--teal-dark); color: #fff; padding: 12px 18px; border-radius: 99px; font-weight: 700; z-index: 20; }
 .overlay { position: fixed; inset: 0; background: rgba(15, 30, 32, 0.55); z-index: 10; display: flex; align-items: flex-end; justify-content: center; }
 .sheet { background: var(--bg); width: 100%; max-width: 640px; max-height: 92vh; overflow: auto; border-radius: 18px 18px 0 0; padding: 16px 14px calc(20px + env(safe-area-inset-bottom)); }
+
+/* ---- Home tabs: one section at a time, for the whole class ---- */
+.tabs { display: flex; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.tabbtn { flex: 1; min-height: 44px; padding: 0 4px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 0.9rem; }
+.tabbtn.on { color: var(--teal); border-bottom-color: var(--teal); }
+
+.student-side { display: flex; align-items: center; gap: 8px; }
+.pips { display: flex; gap: 3px; }
+.pip { width: 20px; height: 20px; border-radius: 5px; border: 1px solid var(--line); font-size: 0.65rem; font-weight: 800; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.pip.on { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+
+/* a class-wide row: tap the header to open the student's panel */
+.plain { width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; font-weight: inherit; text-align: left; justify-content: flex-start; }
+.srow { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.srow-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; cursor: pointer; }
+.srow-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.srow-name { font-weight: 800; font-size: 1.05rem; }
+.srow-sub { color: var(--muted); font-size: 0.85rem; font-weight: 500; }
+.hwlabel { color: #7a5d17; font-weight: 700; }
+.srow-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.chev { color: var(--muted); }
+.chipst { font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 99px; white-space: nowrap; background: var(--teal-soft); color: var(--teal); }
+.chipst.g { background: var(--green-soft); color: var(--green); }
+.chipst.y { background: var(--gold-soft); color: #7a5d17; }
+.chipst.r { background: var(--brick-soft); color: var(--brick); }
+.srow-panel { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+
+/* compact status buttons, colour-coded: green / gold / red */
+.stbtns { display: flex; flex-wrap: wrap; gap: 8px; }
+.st { min-height: 36px; padding: 0 16px; border-radius: 99px; border: 1.5px solid; background: transparent; font-size: 0.85rem; }
+.st.g { color: var(--green); border-color: var(--green); }
+.st.y { color: #7a5d17; border-color: var(--gold); }
+.st.r { color: var(--brick); border-color: var(--brick); }
+.st.g.on { background: var(--green-soft); }
+.st.y.on { background: var(--gold-soft); }
+.st.r.on { background: var(--brick-soft); }
+
+/* surah / dua homework as removable chips */
+.hwchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.hwchip { display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid var(--gold); border-radius: 99px; padding: 4px 12px; font-weight: 700; font-size: 0.9rem; }
+.hwchip button { min-height: 0; min-width: 0; padding: 0 2px; border: 0; border-radius: 0; background: none; color: var(--muted); font-size: 1.15rem; line-height: 1; }
+.linkbtn { min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--teal); font-weight: 700; font-size: 0.9rem; justify-content: flex-start; text-decoration: none; cursor: pointer; }
+.srow-name .pill { margin-left: 8px; vertical-align: middle; }
+
+.autosave { color: var(--muted); font-size: 0.8rem; text-align: center; margin: 14px 0 -6px; }

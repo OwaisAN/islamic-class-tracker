@@ -12,7 +12,7 @@ import type { Entry } from "./types";
 // unsaved edit than to risk a half-repaired shape reaching a component that assumes the
 // current one. (Firestore data, by contrast, is the permanent record and must always be
 // handled by normalizeEntry in lib/logic.ts instead, since it can't simply be discarded.)
-const DRAFT_SCHEMA_VERSION = 1;
+const DRAFT_SCHEMA_VERSION = 2;
 
 interface StoredDraft { v: number; entry: Entry }
 

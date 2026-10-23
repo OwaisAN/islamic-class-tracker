@@ -1,14 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { addStudent, getSettings, getStudents, saveSettings } from "@/lib/data";
-import type { Mode, Student } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import SectionTab from "@/components/SectionTab";
+import { addStudent, getRecentEntries, getSettings, getStudents, saveSettings } from "@/lib/data";
+import { daysAgoStr, isRec, todayStr } from "@/lib/logic";
+import { setRecent, updateRecent, useRecentEntries } from "@/lib/store";
+import type { ClassSettings, Mode, Section, Student } from "@/lib/types";
+
+type Tab = "students" | Section;
+const TABS: { id: Tab; label: string }[] = [
+  { id: "students", label: "Students" },
+  { id: "quran", label: "Qur'an" },
+  { id: "surah", label: "Surahs" },
+  { id: "dua", label: "Duas" },
+  { id: "textbook", label: "Textbook" },
+];
+const PIPS: { id: Section; letter: string; label: string }[] = [
+  { id: "quran", letter: "Q", label: "Qur'an or Qaida" },
+  { id: "surah", letter: "S", label: "Surahs" },
+  { id: "dua", letter: "D", label: "Duas" },
+  { id: "textbook", letter: "T", label: "Textbook" },
+];
+// Enough history for every student's last homework, without reading the whole collection.
+const HISTORY_DAYS = 90;
 
 export default function Home() {
   const [students, setStudents] = useState<Student[] | null>(null);
   const [chapter, setChapter] = useState(1);
   const [nextChapter, setNextChapter] = useState<number | null>(null);
+  const [settings, setSettings] = useState<ClassSettings | null>(null);
+  const entries = useRecentEntries();
+  const [tab, setTab] = useState<Tab>("students");
+  const [toast, setToast] = useState("");
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   const [adding, setAdding] = useState(false);
@@ -21,6 +45,7 @@ export default function Home() {
     try {
       const [s, st] = await Promise.all([getStudents(), getSettings()]);
       setStudents(s);
+      setSettings(st);
       setChapter(st.chapter);
       setNextChapter(st.nextChapter);
     } catch (e) {
@@ -28,7 +53,45 @@ export default function Home() {
       console.error(e);
     }
   }
-  useEffect(() => { load(); }, []);
+
+  // History loads separately so the student list appears straight away; it only feeds the
+  // recorded markers and the per-section tabs.
+  async function loadEntries() {
+    try {
+      setRecent(await getRecentEntries(daysAgoStr(HISTORY_DAYS)));
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // Everything on this screen is re-read whenever it comes back into view — returning from a
+  // student's page, switching back to the app, or the browser restoring the page from its cache —
+  // so it can never show a stale copy of what was just saved elsewhere.
+  const refresh = () => { load(); loadEntries(); };
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  useEffect(() => {
+    refreshRef.current();
+    const onShow = (e: PageTransitionEvent) => { if (e.persisted) refreshRef.current(); };
+    const onVisible = () => { if (document.visibilityState === "visible") refreshRef.current(); };
+    window.addEventListener("pageshow", onShow);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("pageshow", onShow);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  function notify(message: string) {
+    setToast(message);
+    setTimeout(() => setToast(""), 3000);
+  }
+
+  const patchStudent = (id: string, patch: Partial<Student>) =>
+    setStudents((prev) => (prev ? prev.map((s) => (s.id === id ? { ...s, ...patch } : s)) : prev));
+
+  const today = todayStr();
+  const todayEntry = (id: string) => entries.find((e) => e.studentId === id && e.date === today);
 
   const list = useMemo(
     () =>
@@ -86,39 +149,75 @@ export default function Home() {
         </div>
       )}
 
-      <div className="row" style={{ marginBottom: 12 }}>
-        <input className="grow" type="text" placeholder="Search students…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <button className="gold" onClick={() => setAdding(true)}>+ Add</button>
+      <div className="tabs" role="tablist">
+        {TABS.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={`tabbtn${tab === t.id ? " on" : ""}`} onClick={() => setTab(t.id)}>
+            {t.label}
+          </button>
+        ))}
       </div>
-
-      {adding && (
-        <div className="card stack" style={{ marginBottom: 12 }}>
-          <label className="lbl">Student name</label>
-          <input type="text" value={name} autoFocus onChange={(e) => setName(e.target.value)} />
-          <label className="lbl">Starting mode</label>
-          <div className="seg">
-            <button className={mode === "qaida" ? "on" : ""} onClick={() => setMode("qaida")}>Qaida</button>
-            <button className={mode === "quran" ? "on" : ""} onClick={() => setMode("quran")}>Qur&apos;an</button>
-          </div>
-          <div className="row">
-            <button className="grow" onClick={submitAdd} disabled={!name.trim()}>Add student</button>
-            <button className="ghost grow" onClick={() => setAdding(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
 
       {err && <div className="warn-box">{err}</div>}
       {!err && students === null && <p className="muted">Loading…</p>}
-      {students && !list.length && <p className="muted">{q ? "No matching students." : "No students yet. Tap + Add."}</p>}
 
-      <div className="stack" style={{ gap: 8 }}>
-        {list.map((s) => (
-          <Link key={s.id} href={`/student/${s.id}`} className="student">
-            <span>{s.name}</span>
-            <span className={`pill ${s.mode === "quran" ? "" : "gold"}`}>{s.mode === "qaida" ? "Qaida" : "Qur'an"}</span>
-          </Link>
-        ))}
-      </div>
+      {tab === "students" && (
+        <>
+          <div className="row" style={{ marginBottom: 12 }}>
+            <input className="grow" type="text" placeholder="Search students…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <button className="gold" onClick={() => setAdding(true)}>+ Add</button>
+          </div>
+
+          {adding && (
+            <div className="card stack" style={{ marginBottom: 12 }}>
+              <label className="lbl">Student name</label>
+              <input type="text" value={name} autoFocus onChange={(e) => setName(e.target.value)} />
+              <label className="lbl">Starting mode</label>
+              <div className="seg">
+                <button className={mode === "qaida" ? "on" : ""} onClick={() => setMode("qaida")}>Qaida</button>
+                <button className={mode === "quran" ? "on" : ""} onClick={() => setMode("quran")}>Qur&apos;an</button>
+              </div>
+              <div className="row">
+                <button className="grow" onClick={submitAdd} disabled={!name.trim()}>Add student</button>
+                <button className="ghost grow" onClick={() => setAdding(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {students && !list.length && <p className="muted">{q ? "No matching students." : "No students yet. Tap + Add."}</p>}
+
+          <div className="stack" style={{ gap: 8 }}>
+            {list.map((s) => (
+              <Link key={s.id} href={`/student/${s.id}`} className="student">
+                <span>{s.name}</span>
+                <span className="student-side">
+                  <span className={`pill ${s.mode === "quran" ? "" : "gold"}`}>{s.mode === "qaida" ? "Qaida" : "Qur'an"}</span>
+                  <span className="pips" aria-label="Recorded today">
+                    {PIPS.map((p) => {
+                      const e = todayEntry(s.id);
+                      return <span key={p.id} className={`pip${e && isRec(e, p.id) ? " on" : ""}`} title={p.label}>{p.letter}</span>;
+                    })}
+                  </span>
+                </span>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tab !== "students" && students && settings && (
+        <SectionTab
+          key={tab}
+          section={tab}
+          students={students.filter((s) => s.active).sort((a, b) => a.name.localeCompare(b.name))}
+          entries={entries}
+          settings={settings}
+          setEntries={updateRecent}
+          patchStudent={patchStudent}
+          notify={notify}
+        />
+      )}
+
+      {toast && <div className="toast">{toast}</div>}
     </>
   );
 }

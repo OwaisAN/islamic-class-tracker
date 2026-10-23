@@ -1,4 +1,4 @@
-import type { Entry, HomeworkStatus, Mode, NamedHomework, Position, QuranHomework } from "./types.ts";
+import type { Entry, HomeworkStatus, Mode, NamedHomework, Position, QuranHomework, Recorded, Section } from "./types.ts";
 import { SURAHS, SURAH_TRACK, emptyPosition, issueLabel, letterName, surahTrackName } from "./quran.ts";
 
 // ---------- dates ----------
@@ -6,6 +6,13 @@ export function todayStr(d = new Date()): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** The date `days` before `from`, as YYYY-MM-DD. */
+export function daysAgoStr(days: number, from = new Date()): string {
+  const d = new Date(from);
+  d.setDate(d.getDate() - days);
+  return todayStr(d);
 }
 
 export function prettyDate(date: string): string {
@@ -21,11 +28,25 @@ export const entryId = (studentId: string, date: string) => `${studentId}_${date
 // Applied to every Entry read from ANYWHERE (Firestore, localStorage drafts) so that an older
 // shape lingering in one place (e.g. a draft cached before a field's shape changed) never slips
 // past the others and reaches a component expecting the current shape.
-function normalizeNamedHomework(h: unknown): NamedHomework | null {
-  if (!h) return null;
-  if (typeof h === "string") return { name: h, custom: true }; // pre-dropdown shape (plain string)
-  return h as NamedHomework;
+// Dua/surah homework used to be a single item (or an even older plain string); it's now a list.
+// null still means "automatic", so only an actual value is converted.
+function normalizeNamedList(h: unknown): NamedHomework[] | null {
+  if (h === null || h === undefined) return null;
+  if (Array.isArray(h)) return h as NamedHomework[];
+  if (typeof h === "string") return h ? [{ name: h, custom: true }] : null;
+  return [h as NamedHomework];
 }
+
+const SECTIONS: Section[] = ["quran", "surah", "dua", "textbook"];
+
+/** Whether `section` of this entry holds real data (entries saved before this existed are all real). */
+export const isRec = (e: Entry, section: Section) => e.recorded?.[section] !== false;
+
+/** The recorded flags with any missing ones filled in as true. */
+export const fullRecorded = (e: Entry): Recorded =>
+  Object.fromEntries(SECTIONS.map((sec) => [sec, isRec(e, sec)])) as Recorded;
+
+export const NOTHING_RECORDED: Recorded = { quran: false, surah: false, dua: false, textbook: false };
 
 function normalizeQuranHomework(h: unknown): QuranHomework | null {
   if (!h) return null;
@@ -38,7 +59,7 @@ function normalizeQuranHomework(h: unknown): QuranHomework | null {
 }
 
 export function normalizeEntry(e: Entry): Entry {
-  return {
+  const out: Entry = {
     ...e,
     quran: { ...e.quran, homework: normalizeQuranHomework(e.quran.homework), homeworkStatus: e.quran.homeworkStatus ?? null },
     dua: {
@@ -46,13 +67,17 @@ export function normalizeEntry(e: Entry): Entry {
       custom: e.dua.custom ?? false,
       customDua: e.dua.customDua ?? null,
       duaNameAtEntry: e.dua.duaNameAtEntry ?? null,
-      homework: normalizeNamedHomework(e.dua.homework),
+      homework: normalizeNamedList(e.dua.homework),
     },
     surah: e.surah
-      ? { ...e.surah, homework: normalizeNamedHomework(e.surah.homework) }
+      ? { ...e.surah, homework: normalizeNamedList(e.surah.homework) }
       : { trackIndexAtEntry: 0, custom: false, customSurah: null, status: "working", homework: null },
     textbook: { ...e.textbook, homework: e.textbook.homework ?? null },
   };
+  // Firestore rejects `undefined`, so a legacy entry gets no `recorded` key at all.
+  if (e.recorded) out.recorded = fullRecorded(e);
+  else delete out.recorded;
+  return out;
 }
 
 // ---------- entry ordering ----------
@@ -87,6 +112,26 @@ export function defaultStart(prior: Entry | undefined, mode: Mode): Position {
   return emptyPosition(mode);
 }
 
+/**
+ * Which sections of `draft` count as recorded, and whether anything is still unsaved compared with
+ * `base` (the last saved version). A section counts once it was already recorded, has been edited,
+ * or has been tapped — even if the tap matched the default — so defaults nobody touched never turn
+ * into real data on the parent update.
+ */
+export function reviewDraft(draft: Entry, base: Entry, touched: Section[]): { recorded: Recorded; dirty: boolean } {
+  const changed = (sec: Section) => JSON.stringify(draft[sec]) !== JSON.stringify(base[sec]);
+  const recorded = Object.fromEntries(
+    SECTIONS.map((sec) => [sec, isRec(base, sec) || touched.includes(sec) || changed(sec)]),
+  ) as Recorded;
+  const dirty = SECTIONS.some((sec) => changed(sec) || (touched.includes(sec) && !isRec(base, sec)));
+  return { recorded, dirty };
+}
+
+/** The most recent prior entry in which `section` was actually recorded. */
+export function priorWith(priors: Entry[], section: Section): Entry | undefined {
+  return priors.find((e) => isRec(e, section));
+}
+
 /** "Qaida" or "Qur'an" — whichever track a student is actually on, used anywhere the section is labeled. */
 export const trackLabel = (mode: Mode) => (mode === "qaida" ? "Qaida" : "Qur'an");
 
@@ -111,10 +156,26 @@ export function homeworkRange(prior: Entry | undefined, mode: Mode): QuranHomewo
 export const fmtRange = (r: QuranHomework) => `${fmtPos(r.from)} → ${fmtPos(r.to)}`;
 
 export const HOMEWORK_STATUS_LABEL: Record<HomeworkStatus, string> = {
-  completed: "Completed",
-  almost: "Almost",
-  not_done: "Not at all",
+  completed: "Complete",
+  almost: "Partial",
+  not_done: "Incomplete",
 };
+
+/**
+ * Where a student is taken to have ended, when only "did they finish last homework?" is recorded:
+ * complete = they reached its end; incomplete = they made no progress; partial = they stopped
+ * wherever the teacher set the next homework to start (the From picker), else no progress.
+ */
+export function deriveQuranEnd(
+  status: HomeworkStatus | null,
+  start: Position,
+  prevRange: QuranHomework | null,
+  nextHomework: QuranHomework | null,
+): Position {
+  if (status === "completed" && prevRange) return { ...prevRange.to };
+  if (status === "almost" && nextHomework) return { ...nextHomework.from };
+  return { ...start };
+}
 
 export function duaStuck(
   dua: { duaIndexAtEntry: number; custom: boolean; status: string },
@@ -129,7 +190,8 @@ export function duaStuck(
 }
 
 /** priors = prior entries, newest first. Falling behind if the two most recent priors were not_done. */
-export function textbookBehind(priors: Entry[]): boolean {
+export function textbookBehind(allPriors: Entry[]): boolean {
+  const priors = allPriors.filter((e) => isRec(e, "textbook"));
   return priors.length >= 2 && priors[0].textbook.status === "not_done" && priors[1].textbook.status === "not_done";
 }
 
@@ -157,14 +219,14 @@ function nextDua(e: Entry, duaCount: number): number {
 }
 
 export function defaultDuaIndex(entries: Entry[], date: string, studentDuaIndex: number, duaCount: number): number {
-  const priorNonCustom = priorEntries(entries, date).find((e) => !e.dua.custom);
+  const priorNonCustom = priorEntries(entries, date).find((e) => !e.dua.custom && isRec(e, "dua"));
   if (!priorNonCustom) return Math.min(Math.max(studentDuaIndex, 0), Math.max(duaCount - 1, 0));
   return nextDua(priorNonCustom, duaCount);
 }
 
 /** Student's stored duaIndex, recomputed from the latest non-custom entry. */
 export function computeDuaIndex(entries: Entry[], duaCount: number): number | null {
-  const latest = sortDesc(entries).find((e) => !e.dua.custom);
+  const latest = sortDesc(entries).find((e) => !e.dua.custom && isRec(e, "dua"));
   return latest ? nextDua(latest, duaCount) : null;
 }
 
@@ -177,14 +239,16 @@ export function duaEntryName(dua: Entry["dua"], duaList: string[]): string {
 }
 
 /**
- * The dua homework to show for this session: whatever was explicitly set, or — if nothing
- * was set and the dua isn't mastered yet — the dua itself, since "still working on it" IS the
- * homework by default. An explicit choice always wins over this fallback.
+ * The dua homework for this session. An explicit list (even an empty one) always wins; with no
+ * list set, a dua that isn't complete yet is its own homework — "still working on it" IS the
+ * homework by default. An unrecorded dua has no homework at all.
  */
-export function effectiveDuaHomework(dua: Entry["dua"], duaList: string[]): NamedHomework | null {
+export function effectiveDuaHomework(entry: Entry, duaList: string[]): NamedHomework[] {
+  if (!isRec(entry, "dua")) return [];
+  const { dua } = entry;
   if (dua.homework) return dua.homework;
-  if (dua.status === "working") return { name: duaEntryName(dua, duaList), custom: dua.custom };
-  return null;
+  if (dua.status === "working") return [{ name: duaEntryName(dua, duaList), custom: dua.custom }];
+  return [];
 }
 
 // ---------- surah track default, stuck & auto-advance ----------
@@ -196,14 +260,14 @@ function nextSurahTrack(e: Entry): number {
 }
 
 export function defaultSurahTrackIndex(entries: Entry[], date: string, studentIndex: number): number {
-  const priorNonCustom = priorEntries(entries, date).find((e) => !e.surah.custom);
+  const priorNonCustom = priorEntries(entries, date).find((e) => !e.surah.custom && isRec(e, "surah"));
   if (!priorNonCustom) return Math.min(Math.max(studentIndex, 0), SURAH_TRACK.length - 1);
   return nextSurahTrack(priorNonCustom);
 }
 
 /** Student's stored surahTrackIndex, recomputed from the latest non-custom entry. */
 export function computeSurahTrackIndex(entries: Entry[]): number | null {
-  const latest = sortDesc(entries).find((e) => !e.surah.custom);
+  const latest = sortDesc(entries).find((e) => !e.surah.custom && isRec(e, "surah"));
   return latest ? nextSurahTrack(latest) : null;
 }
 
@@ -224,10 +288,12 @@ export function surahEntryName(surah: Entry["surah"]): string {
 }
 
 /** Same idea as effectiveDuaHomework: a not-yet-complete surah IS its own homework by default. */
-export function effectiveSurahHomework(surah: Entry["surah"]): NamedHomework | null {
+export function effectiveSurahHomework(entry: Entry): NamedHomework[] {
+  if (!isRec(entry, "surah")) return [];
+  const { surah } = entry;
   if (surah.homework) return surah.homework;
-  if (surah.status === "working") return { name: surahEntryName(surah), custom: surah.custom };
-  return null;
+  if (surah.status === "working") return [{ name: surahEntryName(surah), custom: surah.custom }];
+  return [];
 }
 
 // ---------- summaries ----------
@@ -235,7 +301,7 @@ export function quranRange(e: Entry): string {
   return `${fmtPos(e.quran.start)} → ${fmtPos(e.quran.end)}`;
 }
 
-const TEXTBOOK_LABEL = { done: "Done", partial: "Partly done", not_done: "Not done" } as const;
+const TEXTBOOK_LABEL = { done: "Complete", partial: "Partial", not_done: "Incomplete" } as const;
 export const textbookLabel = (s: Entry["textbook"]["status"]) => TEXTBOOK_LABEL[s];
 
 // ---------- parent update ----------
@@ -259,56 +325,63 @@ export function buildParentUpdate(
   nextChapter: number | null = null,
 ): { blocks: ParentBlock[]; plain: string } {
   const q = entry.quran;
-  const moved = q.end.mode === q.start.mode ? comparePos(q.end, q.start) > 0 : true;
-  const stuck = quranStuck(q.end, prior);
-
-  const qTags: string[] = [];
-  if (q.letters.length) qTags.push(`Needs: ${q.letters.map(letterName).join(", ")}`);
-  if (q.issues.length) qTags.push(q.issues.map((i) => issueLabel(i)).join(", "));
-  if (q.hesitation) qTags.push("Hesitant");
-  if (stuck) qTags.push("No progress");
-  if (q.note.trim()) qTags.push(q.note.trim());
-  let qLine = moved ? `${fmtPos(q.start)} → ${fmtPos(q.end)}` : `Revised ${fmtPos(q.end)}`;
-  if (qTags.length) qLine += ` · ${qTags.join(" · ")}`;
-  if (q.homeworkStatus === "almost") qLine = `Nearly finished homework · ${qLine}`;
-  else if (q.homeworkStatus === "not_done") qLine = `⚠️ Missed homework · ${qLine}`;
-  const qAttention = qTags.length > 0 || q.homeworkStatus === "not_done" || q.homeworkStatus === "almost";
-
+  const rec = fullRecorded(entry);
   const track = trackLabel(q.end.mode);
-  const surahName = surahEntryName(entry.surah);
-  const sStuck = surahStuck(entry.surah, prior);
-  const sLine = `${surahName} — ${statusLabel(entry.surah.status)}${sStuck ? " · No progress" : ""}`;
-
-  const duaName = duaEntryName(entry.dua, duaList);
-  const dStuck = duaStuck(entry.dua, prior);
-  const dLine = `${duaName} — ${statusLabel(entry.dua.status)}${dStuck ? " · No progress" : ""}`;
-
-  const tb = entry.textbook;
-  const ch = tb.chapter ?? chapter;
-  let tLine = `Ch. ${ch} — ${textbookLabel(tb.status)}`;
-  if (tb.note.trim()) tLine += ` · ${tb.note.trim()}`;
-
-  const blocks: ParentBlock[] = [
-    { kind: "quran", title: `📖 ${track}`, tone: qAttention ? "attention" : "good", text: qLine },
-    { kind: "surah", title: "🌙 Surah", tone: entry.surah.status === "mastered" ? "good" : "attention", text: sLine },
-    { kind: "dua", title: "🤲 Dua", tone: entry.dua.status === "mastered" ? "good" : "attention", text: dLine },
-    { kind: "textbook", title: "📝 Textbook", tone: tb.status === "done" ? "good" : "attention", text: tLine },
-  ];
-
-  // All three tracks' homework in one bubble, so parents see the full to-do list at a glance.
+  const blocks: ParentBlock[] = [];
   const hwLines: string[] = [];
-  if (q.homework) hwLines.push(`${track}: read from ${fmtPos(q.homework.from)} to ${fmtPos(q.homework.to)}`);
-  const surahHw = effectiveSurahHomework(entry.surah);
-  if (surahHw) hwLines.push(`Surah: ${surahHw.name}`);
-  const duaHw = effectiveDuaHomework(entry.dua, duaList);
-  if (duaHw) hwLines.push(`Dua: ${duaHw.name}`);
-  // The chapter move is classwide and applies no matter whether this student finished today's
-  // chapter — it's about what's next, not a reward for completion. A per-student note (if any)
-  // rides alongside it.
-  const tbHwParts: string[] = [];
-  if (nextChapter !== null) tbHwParts.push(`Move to Chapter ${nextChapter}`);
-  if (tb.homework) tbHwParts.push(tb.homework);
-  if (tbHwParts.length) hwLines.push(`Textbook: ${tbHwParts.join(" · ")}`);
+
+  if (rec.quran) {
+    const pq = prior && isRec(prior, "quran") ? prior : undefined;
+    const moved = q.end.mode === q.start.mode ? comparePos(q.end, q.start) > 0 : true;
+    const stuck = quranStuck(q.end, pq);
+    const qTags: string[] = [];
+    if (q.letters.length) qTags.push(`Needs: ${q.letters.map(letterName).join(", ")}`);
+    if (q.issues.length) qTags.push(q.issues.map((i) => issueLabel(i)).join(", "));
+    if (q.hesitation) qTags.push("Hesitant");
+    if (stuck) qTags.push("No progress");
+    if (q.note.trim()) qTags.push(q.note.trim());
+    let qLine = moved ? `${fmtPos(q.start)} → ${fmtPos(q.end)}` : `Revised ${fmtPos(q.end)}`;
+    if (qTags.length) qLine += ` · ${qTags.join(" · ")}`;
+    if (q.homeworkStatus === "almost") qLine = `Nearly finished homework · ${qLine}`;
+    else if (q.homeworkStatus === "not_done") qLine = `⚠️ Missed homework · ${qLine}`;
+    const qAttention = qTags.length > 0 || q.homeworkStatus === "not_done" || q.homeworkStatus === "almost";
+    blocks.push({ kind: "quran", title: `📖 ${track}`, tone: qAttention ? "attention" : "good", text: qLine });
+    if (q.homework) hwLines.push(`${track}: read from ${fmtPos(q.homework.from)} to ${fmtPos(q.homework.to)}`);
+  }
+
+  if (rec.surah) {
+    const ps = prior && isRec(prior, "surah") ? prior : undefined;
+    const sStuck = surahStuck(entry.surah, ps);
+    const sLine = `${surahEntryName(entry.surah)} — ${statusLabel(entry.surah.status)}${sStuck ? " · No progress" : ""}`;
+    blocks.push({ kind: "surah", title: "🌙 Surah", tone: entry.surah.status === "mastered" ? "good" : "attention", text: sLine });
+    const surahHw = effectiveSurahHomework(entry);
+    if (surahHw.length) hwLines.push(`Surah: ${surahHw.map((h) => h.name).join(", ")}`);
+  }
+
+  if (rec.dua) {
+    const pd = prior && isRec(prior, "dua") ? prior : undefined;
+    const dStuck = duaStuck(entry.dua, pd);
+    const dLine = `${duaEntryName(entry.dua, duaList)} — ${statusLabel(entry.dua.status)}${dStuck ? " · No progress" : ""}`;
+    blocks.push({ kind: "dua", title: "🤲 Dua", tone: entry.dua.status === "mastered" ? "good" : "attention", text: dLine });
+    const duaHw = effectiveDuaHomework(entry, duaList);
+    if (duaHw.length) hwLines.push(`Dua: ${duaHw.map((h) => h.name).join(", ")}`);
+  }
+
+  if (rec.textbook) {
+    const tb = entry.textbook;
+    let tLine = `Ch. ${tb.chapter ?? chapter} — ${textbookLabel(tb.status)}`;
+    if (tb.note.trim()) tLine += ` · ${tb.note.trim()}`;
+    blocks.push({ kind: "textbook", title: "📝 Textbook", tone: tb.status === "done" ? "good" : "attention", text: tLine });
+    // The chapter move is classwide and applies no matter whether this student finished today's
+    // chapter — it's about what's next, not a reward for completion. A per-student note (if any)
+    // rides alongside it.
+    const tbHwParts: string[] = [];
+    if (nextChapter !== null) tbHwParts.push(`Move to Chapter ${nextChapter}`);
+    if (tb.homework) tbHwParts.push(tb.homework);
+    if (tbHwParts.length) hwLines.push(`Textbook: ${tbHwParts.join(" · ")}`);
+  }
+
+  // All the tracks' homework in one bubble, so parents see the full to-do list at a glance.
   if (hwLines.length) blocks.push({ kind: "homework", title: "🌟 Homework for next class", tone: "attention", text: hwLines.join("\n") });
 
   const plain = [

@@ -29,7 +29,7 @@ const RAW: [string, number][] = [
 export const SURAHS: { name: string; ayahs: number }[] = RAW.map(([name, ayahs]) => ({ name, ayahs }));
 
 // Assumption: a Qaida has up to this many pages / lines per page. Adjust to your book.
-export const QAIDA_PAGES = 40;
+export const QAIDA_PAGES = 50;
 export const QAIDA_LINES = 15;
 
 export const LETTERS: { id: string; ar: string; en: string }[] = [

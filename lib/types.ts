@@ -5,6 +5,12 @@ export type HomeworkStatus = "completed" | "almost" | "not_done";
 export interface NamedHomework { name: string; custom: boolean }
 export interface QuranHomework { from: Position; to: Position }
 
+export type Section = "quran" | "surah" | "dua" | "textbook";
+// Which sections of an entry were actually recorded. Entries made from the per-section lists only
+// fill in one section at a time, so the rest must not be mistaken for real data. An entry with no
+// `recorded` field at all (saved before this existed) counts as fully recorded.
+export type Recorded = Record<Section, boolean>;
+
 export interface Student {
   id: string;
   name: string;
@@ -26,6 +32,7 @@ export interface Position {
 export interface Entry {
   studentId: string;
   date: string; // YYYY-MM-DD
+  recorded?: Recorded;
   quran: {
     start: Position;
     end: Position;
@@ -44,14 +51,16 @@ export interface Entry {
     custom: boolean;
     customDua: string | null; // free-text name, set only when custom
     status: "mastered" | "working";
-    homework: NamedHomework | null; // dua to prepare for next class
+    // null = automatic (a not-yet-complete dua is its own homework); an array, even an empty one,
+    // is an explicit list chosen by the teacher.
+    homework: NamedHomework[] | null;
   };
   surah: {
     trackIndexAtEntry: number; // index into SURAH_TRACK, kept even on a custom entry
     custom: boolean;
     customSurah: number | null; // 0-indexed surah number, set only when custom
     status: "mastered" | "working";
-    homework: NamedHomework | null; // surah to practise for next class
+    homework: NamedHomework[] | null; // same rules as dua.homework
   };
   textbook: {
     status: "done" | "partial" | "not_done";
