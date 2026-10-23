@@ -6,7 +6,7 @@ import SectionTab from "@/components/SectionTab";
 import { addStudent, getRecentEntries, getSettings, getStudents, saveSettings } from "@/lib/data";
 import { daysAgoStr, isRec, todayStr } from "@/lib/logic";
 import { setRecent, updateRecent, useRecentEntries } from "@/lib/store";
-import type { ClassSettings, Mode, Section, Student } from "@/lib/types";
+import type { ClassSettings, Group, GroupSection, Mode, Section, Student } from "@/lib/types";
 
 type Tab = "students" | Section;
 const TABS: { id: Tab; label: string }[] = [
@@ -85,6 +85,18 @@ export default function Home() {
   function notify(message: string) {
     setToast(message);
     setTimeout(() => setToast(""), 3000);
+  }
+
+  // Group lists live in settings, one list per section; saving one section never touches the other.
+  async function saveGroups(section: GroupSection, groups: Group[]) {
+    setSettings((prev) => (prev ? { ...prev, groups: { ...prev.groups, [section]: groups } } : prev));
+    try {
+      await saveSettings({ groups: { [section]: groups } });
+    } catch (e) {
+      console.error(e);
+      notify("Couldn't save the groups. Check your connection.");
+      load();
+    }
   }
 
   const patchStudent = (id: string, patch: Partial<Student>) =>
@@ -214,6 +226,7 @@ export default function Home() {
           setEntries={updateRecent}
           patchStudent={patchStudent}
           notify={notify}
+          saveGroups={saveGroups}
         />
       )}
 

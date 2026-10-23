@@ -1,4 +1,4 @@
-import type { Entry, HomeworkStatus, Mode, NamedHomework, Position, QuranHomework, Recorded, Section } from "./types.ts";
+import type { Entry, Group, GroupSection, HomeworkStatus, Mode, NamedHomework, Position, QuranHomework, Recorded, Section, Student } from "./types.ts";
 import { SURAHS, SURAH_TRACK, emptyPosition, issueLabel, letterName, surahTrackName } from "./quran.ts";
 
 // ---------- dates ----------
@@ -392,4 +392,26 @@ export function buildParentUpdate(
   ].join("\n");
 
   return { blocks, plain };
+}
+
+// ----- teaching groups (surahs and duas) -----
+
+/**
+ * Splits students into the section's groups, in the order the groups were made. A student whose group
+ * was deleted (or who never had one) is ungrouped. Order within each list follows `students`.
+ */
+export function groupStudents(students: Student[], groups: Group[], section: GroupSection) {
+  const known = new Set(groups.map((g) => g.id));
+  return {
+    groups: groups.map((group) => ({ group, members: students.filter((s) => s.groups?.[section] === group.id) })),
+    ungrouped: students.filter((s) => !known.has(s.groups?.[section] ?? "")),
+  };
+}
+
+/** "Group 1", "Group 2"… the first number not already used as a name. */
+export function nextGroupName(groups: Group[]): string {
+  const names = new Set(groups.map((g) => g.name));
+  let n = groups.length + 1;
+  while (names.has(`Group ${n}`)) n++;
+  return `Group ${n}`;
 }

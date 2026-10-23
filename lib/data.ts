@@ -1,8 +1,8 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
 import {
-  collection, doc, getDoc, getDocs, getFirestore, query, setDoc, updateDoc, waitForPendingWrites, where,
+  collection, deleteField, doc, getDoc, getDocs, getFirestore, query, setDoc, updateDoc, waitForPendingWrites, where,
 } from "firebase/firestore";
-import type { ClassSettings, Entry, Mode, Student } from "./types";
+import type { ClassSettings, Entry, GroupSection, Mode, Student } from "./types";
 import { DEFAULT_DUAS } from "./quran";
 import { computeDuaIndex, computeSurahTrackIndex, entryId, normalizeEntry, rollChapterForDate, todayStr } from "./logic";
 
@@ -41,6 +41,7 @@ const settingsRef = () => doc(db, "settings", "class");
  * to start the new chapter, with no risk of a mid-class edit relabeling today's own entries.
  */
 export async function getSettings(): Promise<ClassSettings> {
+  await afterOwnWrites();
   const snap = await getDoc(settingsRef());
   const base: ClassSettings = snap.exists()
     ? {
@@ -83,6 +84,11 @@ export async function addStudent(name: string, mode: Mode) {
 
 export async function updateStudent(id: string, patch: Partial<Omit<Student, "id">>) {
   await updateDoc(doc(db, "students", id), patch);
+}
+
+/** Puts a student in a group for one section (or out of every group with null), touching nothing else. */
+export async function setStudentGroup(id: string, section: GroupSection, groupId: string | null) {
+  await updateDoc(doc(db, "students", id), { [`groups.${section}`]: groupId ?? deleteField() });
 }
 
 // ----- entries -----

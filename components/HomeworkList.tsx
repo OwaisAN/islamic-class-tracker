@@ -11,13 +11,14 @@ import type { NamedHomework } from "@/lib/types";
  * hands control back.
  */
 export default function HomeworkList({
-  kind, items, auto, options, onChange,
+  kind, items, auto, options, onChange, allowAuto = true,
 }: {
   kind: "surah" | "dua";
   items: NamedHomework[];
   auto: boolean;
   options: string[];
   onChange: (next: NamedHomework[] | null) => void;
+  allowAuto?: boolean; // false where "automatic" has no meaning, e.g. one list given to a whole group
 }) {
   const [other, setOther] = useState(false);
   const [text, setText] = useState("");
@@ -79,7 +80,7 @@ export default function HomeworkList({
         </div>
       )}
 
-      {!auto && (
+      {!auto && allowAuto && (
         <button type="button" className="linkbtn" onClick={() => onChange(null)}>Use automatic</button>
       )}
     </div>

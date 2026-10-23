@@ -180,3 +180,11 @@ pre.plain { white-space: pre-wrap; font: inherit; font-size: 0.9rem; background:
 .srow-name .pill { margin-left: 8px; vertical-align: middle; }
 
 .autosave { color: var(--muted); font-size: 0.8rem; text-align: center; margin: 14px 0 -6px; }
+
+/* Teaching groups (surahs and duas) */
+.gblock { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.ghead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 2px; border-bottom: 2px solid var(--teal); cursor: pointer; }
+.ghead-name { font-weight: 800; color: var(--teal); font-size: 1.05rem; }
+.gtools { display: flex; flex-wrap: wrap; gap: 8px; }
+.gmember { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gadd { margin-bottom: 12px; }

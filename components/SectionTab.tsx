@@ -2,17 +2,18 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import GroupBlock from "@/components/GroupBlock";
 import HomeworkList from "@/components/HomeworkList";
 import PosPicker from "@/components/PosPicker";
-import { saveEntry } from "@/lib/data";
+import { saveEntry, setStudentGroup } from "@/lib/data";
 import { buildDraft } from "@/lib/draft";
 import {
   computeDuaIndex, computeSurahTrackIndex, deriveQuranEnd, duaEntryName, effectiveDuaHomework,
-  effectiveSurahHomework, fmtRange, fullRecorded, homeworkRange, HOMEWORK_STATUS_LABEL, isRec, priorEntries,
-  priorWith, statusLabel, surahEntryName, textbookLabel, todayStr, trackLabel,
+  effectiveSurahHomework, fmtRange, fullRecorded, groupStudents, homeworkRange, HOMEWORK_STATUS_LABEL, isRec, priorEntries,
+  nextGroupName, priorWith, statusLabel, surahEntryName, textbookLabel, todayStr, trackLabel,
 } from "@/lib/logic";
 import { SURAHS, SURAH_TRACK, surahTrackName } from "@/lib/quran";
-import type { ClassSettings, Entry, HomeworkStatus, Position, Section, Student } from "@/lib/types";
+import type { ClassSettings, Entry, Group, GroupSection, HomeworkStatus, NamedHomework, Position, Section, Student } from "@/lib/types";
 
 type Tone = "g" | "y" | "r";
 interface StatusOption { v: string; label: string; tone: Tone }
@@ -69,14 +70,16 @@ interface Props {
   setEntries: (fn: (prev: Entry[]) => Entry[]) => void;
   patchStudent: (id: string, patch: Partial<Student>) => void;
   notify: (message: string) => void;
+  saveGroups: (section: GroupSection, groups: Group[]) => void;
 }
 
 /**
  * One section (Qur'an, Surahs, Duas or Textbook) for the whole class: every student in a list showing
  * last session's homework, and a panel per student to record how it went and set the next homework.
- * Every change is written straight to today's entry, touching only this section.
+ * Every change is written straight to today's entry, touching only this section. Surahs and Duas can
+ * also be split into teaching groups (made by hand, separately for each section).
  */
-export default function SectionTab({ section, students, entries, settings, setEntries, patchStudent, notify }: Props) {
+export default function SectionTab({ section, students, entries, settings, setEntries, patchStudent, notify, saveGroups }: Props) {
   const today = todayStr();
   const [exp, setExp] = useState<string | null>(null);
   const duaList = settings.duaList;
@@ -297,15 +300,81 @@ export default function SectionTab({ section, students, entries, settings, setEn
     );
   }
 
+  const gsec: GroupSection | null = section === "surah" || section === "dua" ? section : null;
+  const groups = (gsec && settings.groups?.[gsec]) || [];
+
+  const addGroup = () => gsec && saveGroups(gsec, [...groups, { id: `g${Date.now().toString(36)}`, name: nextGroupName(groups) }]);
+  const renameGroup = (id: string, name: string) => gsec && saveGroups(gsec, groups.map((g) => (g.id === id ? { ...g, name } : g)));
+  // Students keep pointing at a deleted group's id, which simply no longer matches anything: ungrouped.
+  const deleteGroup = (id: string) => gsec && saveGroups(gsec, groups.filter((g) => g.id !== id));
+  const groupNameOf = (studentId: string) => {
+    const gid = gsec ? students.find((s) => s.id === studentId)?.groups?.[gsec] : undefined;
+    return groups.find((g) => g.id === gid)?.name ?? null;
+  };
+
+  async function setMember(s: Student, groupId: string, inGroup: boolean) {
+    if (!gsec) return;
+    const before = s.groups;
+    const { [gsec]: _old, ...rest } = before ?? {};
+    patchStudent(s.id, { groups: inGroup ? { ...rest, [gsec]: groupId } : rest });
+    try {
+      await setStudentGroup(s.id, gsec, inGroup ? groupId : null);
+    } catch (err) {
+      console.error(err);
+      patchStudent(s.id, { groups: before });
+      notify(`Couldn't update ${s.name}'s group. Check your connection.`);
+    }
+  }
+
+  // The same homework list for every member, written to each one's own entry for today.
+  const giveGroupHomework = (members: Student[], items: NamedHomework[]) =>
+    Promise.all(members.map((m) => apply(m, (x) => { (section === "surah" ? x.surah : x.dua).homework = items.map((i) => ({ ...i })); })));
+
+  const split = gsec ? groupStudents(students, groups, gsec) : null;
   const recordedCount = students.filter((s) => isRec(buildDraft(s.id, today, entries.filter((x) => x.studentId === s.id), s, settings), section)).length;
 
   return (
     <>
-      <div className="muted" style={{ marginBottom: 8, fontSize: "0.85rem" }}>{recordedCount} of {students.length} recorded</div>
-      <div className="stack" style={{ gap: 8 }}>
-        {students.map(row)}
-        {!students.length && <p className="muted">No students yet.</p>}
+      <div className="row" style={{ marginBottom: 8, justifyContent: "space-between", alignItems: "center" }}>
+        <span className="muted" style={{ fontSize: "0.85rem" }}>{recordedCount} of {students.length} recorded</span>
+        {gsec && <button type="button" className="small ghost" onClick={addGroup}>+ New group</button>}
       </div>
+      {gsec && split ? (
+        <>
+          {split.groups.map(({ group, members }) => (
+            <GroupBlock
+              key={group.id}
+              group={group}
+              kind={gsec}
+              members={members}
+              everyone={students}
+              groupNameOf={groupNameOf}
+              options={gsec === "surah" ? SURAH_TRACK.map((_, i) => surahTrackName(i)) : duaList}
+              onRename={(name) => renameGroup(group.id, name)}
+              onDelete={() => deleteGroup(group.id)}
+              onSetMember={(id, inGroup) => { const st = students.find((x) => x.id === id); if (st) setMember(st, group.id, inGroup); }}
+              onApplyHomework={(items) => giveGroupHomework(members, items)}
+            >
+              {members.map(row)}
+            </GroupBlock>
+          ))}
+          {groups.length > 0 && split.ungrouped.length > 0 && (
+            <div className="ghead" style={{ cursor: "default" }}>
+              <span className="ghead-name">Ungrouped</span>
+              <span className="muted">{split.ungrouped.length} {split.ungrouped.length === 1 ? "student" : "students"}</span>
+            </div>
+          )}
+          <div className="stack" style={{ gap: 8 }}>
+            {split.ungrouped.map(row)}
+            {!students.length && <p className="muted">No students yet.</p>}
+          </div>
+        </>
+      ) : (
+        <div className="stack" style={{ gap: 8 }}>
+          {students.map(row)}
+          {!students.length && <p className="muted">No students yet.</p>}
+        </div>
+      )}
     </>
   );
 }

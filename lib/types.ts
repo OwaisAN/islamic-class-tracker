@@ -11,6 +11,11 @@ export type Section = "quran" | "surah" | "dua" | "textbook";
 // `recorded` field at all (saved before this existed) counts as fully recorded.
 export type Recorded = Record<Section, boolean>;
 
+// Sections that can split the class into teaching groups. Each section has its own groups, so a
+// student can be in one group for surahs and a different one for duas.
+export type GroupSection = "surah" | "dua";
+export interface Group { id: string; name: string }
+
 export interface Student {
   id: string;
   name: string;
@@ -18,6 +23,7 @@ export interface Student {
   duaIndex: number;
   surahTrackIndex: number; // position in the fixed SURAH_TRACK list
   active: boolean;
+  groups?: Partial<Record<GroupSection, string>>; // group id per section; missing or unknown id = ungrouped
   // teacherId?: string;  // reserved for multi-teacher support
 }
 
@@ -76,4 +82,5 @@ export interface ClassSettings {
   lastSessionDate: string | null; // YYYY-MM-DD of the most recent day settings were used for;
   // once a NEW date is seen, nextChapter (if set) is promoted into chapter automatically.
   duaList: string[];
+  groups?: Partial<Record<GroupSection, Group[]>>; // the groups that exist in each section, in display order
 }

@@ -4,12 +4,12 @@ import {
   comparePos, quranStuck, duaStuck, duaEntryName, effectiveDuaHomework, effectiveSurahHomework, surahStuck,
   textbookBehind, computeDuaIndex, computeSurahTrackIndex, defaultDuaIndex, defaultStart, defaultSurahTrackIndex,
   homeworkRange, fmtRange, rollChapterForDate, buildParentUpdate, normalizeEntry, statusLabel, trackLabel,
-  isRec, fullRecorded, priorWith, deriveQuranEnd, HOMEWORK_STATUS_LABEL, textbookLabel, daysAgoStr, reviewDraft,
+  isRec, fullRecorded, priorWith, deriveQuranEnd, HOMEWORK_STATUS_LABEL, textbookLabel, daysAgoStr, reviewDraft, groupStudents, nextGroupName,
 } from "./logic.ts";
 import { SURAHS, SURAH_TRACK } from "./quran.ts";
 import { buildDraft } from "./draft.ts";
 import { getRecent, setRecent, updateRecent, upsertEntry } from "./store.ts";
-import type { Entry, Position } from "./types.ts";
+import type { Entry, Position, Student } from "./types.ts";
 
 const q = (surah: number, ayah: number): Position => ({ mode: "quran", page: null, line: null, surah, ayah });
 const qa = (page: number, line: number): Position => ({ mode: "qaida", page, line, surah: null, ayah: null });
@@ -378,4 +378,28 @@ test("the shared store replaces an entry for the same student and date instead o
   assert.equal(getRecent().length, 2);
   updateRecent(() => []);
   assert.deepEqual(getRecent(), []);
+});
+
+test("groups are per section: a student can sit in different groups for surahs and duas", () => {
+  const st = (id: string, groups?: Student["groups"]): Student =>
+    ({ id, name: id, mode: "quran", duaIndex: 0, surahTrackIndex: 0, active: true, groups });
+  const students = [st("john", { surah: "a", dua: "x" }), st("sara", { surah: "a" }), st("omar", { dua: "x" }), st("lina")];
+  const surah = groupStudents(students, [{ id: "a", name: "An-Nas" }, { id: "b", name: "Empty" }], "surah");
+  assert.deepEqual(surah.groups.map((g) => g.members.map((m) => m.id)), [["john", "sara"], []]);
+  assert.deepEqual(surah.ungrouped.map((m) => m.id), ["omar", "lina"]);
+  const dua = groupStudents(students, [{ id: "x", name: "Waking up" }], "dua");
+  assert.deepEqual(dua.groups[0].members.map((m) => m.id), ["john", "omar"]);
+});
+
+test("a deleted group turns its members ungrouped without touching them", () => {
+  const s: Student = { id: "john", name: "john", mode: "quran", duaIndex: 0, surahTrackIndex: 0, active: true, groups: { surah: "gone" } };
+  const r = groupStudents([s], [{ id: "a", name: "A" }], "surah");
+  assert.equal(r.ungrouped.length, 1);
+  assert.equal(groupStudents([s], [], "surah").ungrouped.length, 1);
+});
+
+test("new groups get the next free default name", () => {
+  assert.equal(nextGroupName([]), "Group 1");
+  assert.equal(nextGroupName([{ id: "a", name: "Group 1" }]), "Group 2");
+  assert.equal(nextGroupName([{ id: "a", name: "An-Nas" }, { id: "b", name: "Group 2" }]), "Group 3");
 });
